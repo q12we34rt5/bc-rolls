@@ -35,7 +35,7 @@
   }
 
   function buildPool(data, eventKey) {
-    const ev = data.events[eventKey];
+    const ev = data.events[eventKey] || (data.platinum || {})[eventKey];
     if (!ev) throw new Error('unknown event ' + eventKey);
     const slots = { [RARE]: [], [SUPA]: [], [UBER]: [], [LEGEND]: [] };
     for (const id of data.pools[ev.id]) {

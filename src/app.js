@@ -17,6 +17,7 @@
     prefs: {},
     uberBonus: 0.5, legendBonus: 1, allowMulti: true, stopAtTargets: true, keepFood: false, maxRolls: '',
     bannerBias: {}, // event key -> tie-break preference per roll on that banner
+    platTickets: '', platKey: '', platMust: [], folded: ['platinum'],
     mode: 'exact', rv2: 0.2, rv3: 1, rv4: 5, rv5: 8, dv2: 0, dv3: 0, dv4: 0.5, dv5: 1, beam: 1000, owned: [],
   });
 
@@ -94,7 +95,7 @@
   }
 
   function fillForm() {
-    for (const k of ['seed', 'last', 'pos', 'food', 'tickets', 'maxRolls', 'dateFrom', 'dateTo', 'lang', 'uberBonus', 'legendBonus',
+    for (const k of ['seed', 'last', 'pos', 'food', 'tickets', 'maxRolls', 'platTickets', 'dateFrom', 'dateTo', 'lang', 'uberBonus', 'legendBonus',
       'rv2', 'rv3', 'rv4', 'rv5', 'dv2', 'dv3', 'dv4', 'dv5', 'beam']) {
       $(k).value = state[k];
     }
@@ -104,6 +105,7 @@
     $(state.mode === 'collect' ? 'modeCollect' : 'modeExact').checked = true;
     renderMode();
     renderBanners();
+    renderPlat();
   }
 
   function readForm() {
@@ -117,6 +119,7 @@
     state.allowMulti = $('allowMulti').checked;
     state.stopAtTargets = $('stopAtTargets').checked;
     state.keepFood = $('keepFood').value === '1';
+    state.platTickets = Math.max(0, parseInt($('platTickets').value, 10) || 0) || '';
     { const m = Math.floor(parseFloat($('maxRolls').value)); state.maxRolls = m > 0 ? m : ''; }
     for (const k of ['rv2', 'rv3', 'rv4', 'rv5', 'dv2', 'dv3', 'dv4', 'dv5']) state[k] = Math.max(0, parseFloat($(k).value) || 0);
     state.beam = Math.max(50, parseInt($('beam').value, 10) || 1000);
@@ -150,6 +153,7 @@
       }).join('');
     }
     renderTable();
+    renderPlat();
   }
 
   function selectedPools() {
@@ -195,6 +199,46 @@
     const must = Object.values(state.prefs).filter((p) => p.must).length;
     $('prefCount').textContent = custom ? `已設定 ${custom} 隻${must ? `，必抽 ${must}` : ''}` : '';
     $('ownedCount').textContent = state.owned.length ? `已登記 ${state.owned.length} 隻` : '';
+  }
+
+  // Platinum banner: the chosen one, or the newest that has started by the
+  // end of the date range.
+  function platKeys() {
+    const pl = data().platinum || {};
+    return Object.keys(pl).sort((a, b) => pl[b].start.localeCompare(pl[a].start));
+  }
+  function platKey() {
+    const keys = platKeys();
+    if (keys.includes(state.platKey)) return state.platKey;
+    return keys.find((k) => data().platinum[k].start <= state.dateTo) || keys[0] || '';
+  }
+
+  function renderPlat() {
+    const keys = platKeys(), key = platKey();
+    $('platKey').innerHTML = keys.map((k) => {
+      const ev = data().platinum[k];
+      return `<option value="${k}" ${k === key ? 'selected' : ''}>${ev.start} 起・#${ev.id}（${data().pools[ev.id].length} 隻）</option>`;
+    }).join('') || '<option value="">沒有資料</option>';
+    const must = new Set(state.platMust);
+    const n = +state.platTickets || 0;
+    $('platCount').textContent = n || must.size ? `券 ${n} 張・必抽 ${must.size} 隻` : '';
+    if (!key) { $('platList').innerHTML = ''; return; }
+    const pool = E.buildPool(data(), key);
+    const q = $('platFilter').value.trim(), only = $('platOnly').checked;
+    const owned = new Set(state.owned);
+    // Grouped by home series (computed in scripts/build-data.rb); older data
+    // without groups falls back to rarity.
+    const groups = data().platinum[key].groups
+      || [5, 4].map((r) => ({ name: RARITY[r], ids: pool.slots[r] }));
+    const show = (id) => (!q || catName(id).includes(q) || String(id) === q) && (!only || must.has(id));
+    $('platList').innerHTML = groups.map((g) => {
+      const list = g.ids.filter(show).sort((a, b) => b - a);
+      if (!list.length) return '';
+      const picked = list.filter((id) => must.has(id)).length;
+      return `<div class="grp"><div class="gh">${esc(g.name)}<span>${list.length} 隻${picked ? `・已勾 ${picked}` : ''}</span></div>
+        <div class="chips">${list.map((id) => `<button type="button" class="pc ${owned.has(id) ? 'own' : ''}" data-id="${id}" aria-pressed="${must.has(id)}"
+          title="${RARITY[catRarity(id)]}${owned.has(id) ? '・已擁有' : ''}"><span class="dot r${catRarity(id)}"></span>${esc(catName(id))}</button>`).join('')}</div></div>`;
+    }).join('') || '<p class="hint">沒有符合的角色。</p>';
   }
 
   let tableGroups = {};
@@ -343,9 +387,18 @@
         return { id, weight: +pr.w || 0, dup: !stop && isSet(pr.d) ? +pr.d : 0, must: !!pr.must, star: true };
       });
       if (!stop) for (const id of custom) if (!isStar(prefOf(id)) && isSet(prefOf(id).d)) copyBonus[id] = +prefOf(id).d;
-      if (!targets.length) return showError('精準模式至少要替一隻角色設定優先度或必抽。想多抽沒有的角色可以改用收集模式。');
-      if (targets.length > 30) return showError(`精準模式最多 30 隻有優先度的角色，目前 ${targets.length} 隻。可以改用收集模式。`);
     }
+
+    // Platinum: must-pulls picked in section 6 join the targets.
+    const platTickets = +state.platTickets || 0;
+    const platPool = platTickets > 0 && platKey() ? E.buildPool(data(), platKey()) : null;
+    for (const id of state.platMust) {
+      const t = targets.find((x) => x.id === id);
+      if (t) { t.must = true; t.star = true; }
+      else targets.push({ id, weight: +prefOf(id).w || 10, dup: 0, must: true, star: true });
+    }
+    if (!collect && !targets.length) return showError('精準模式至少要替一隻角色設定優先度或必抽。想多抽沒有的角色可以改用收集模式。');
+    if (!collect && targets.length > 30) return showError(`精準模式最多 30 隻有優先度的角色，目前 ${targets.length} 隻。可以改用收集模式。`);
 
     const seeds = new E.Seeds(seed);
     const opts = {
@@ -359,6 +412,7 @@
       owned: state.owned, beam: state.beam,
       rarityValue: { 2: state.rv2, 3: state.rv3, 4: state.rv4, 5: state.rv5 },
       dupValue: { 2: state.dv2, 3: state.dv3, 4: state.dv4, 5: state.dv5 },
+      platinum: platPool ? { pool: platPool, tickets: platTickets } : null,
     };
     $('results').classList.add('busy');
     $('run').textContent = '計算中…';
@@ -366,7 +420,7 @@
       const t0 = performance.now();
       let res;
       try { res = collect ? P.planCollect(opts) : P.plan(opts); } catch (e) { $('results').classList.remove('busy'); $('run').textContent = '計算最佳路線'; return showError(e.message); }
-      renderResult(res, opts, pools, performance.now() - t0, collect);
+      renderResult(res, opts, platPool ? [...pools, platPool] : pools, performance.now() - t0, collect);
       $('results').classList.remove('busy');
       $('run').textContent = '計算最佳路線';
     }, 30);
@@ -393,14 +447,21 @@
   // End-of-plan tally: must-pull status, missed targets, and every cat
   // obtained grouped by rarity with copy counts.
   function finalSummary(res, opts, targets, pools) {
-    const all = res.steps.flatMap((s) => s.cats).filter((c) => c.id > 0);
-    const tally = new Map();
-    for (const c of all) {
-      const e = tally.get(c.id) || { id: c.id, rarity: c.rarity, count: 0, fresh: false };
-      e.count++;
-      if (c.fresh) e.fresh = true;
-      tally.set(c.id, e);
-    }
+    const tallyOf = (steps) => {
+      const tally = new Map();
+      for (const c of steps.flatMap((s) => s.cats).filter((x) => x.id > 0)) {
+        const e = tally.get(c.id) || { id: c.id, rarity: c.rarity, count: 0, fresh: false };
+        e.count++;
+        if (c.fresh) e.fresh = true;
+        tally.set(c.id, e);
+      }
+      return tally;
+    };
+    // Everything pulled (for must-pull status), and the regular and platinum
+    // pulls listed separately.
+    const tally = tallyOf(res.steps);
+    const regular = tallyOf(res.steps.filter((s) => s.type !== 'plat'));
+    const platTally = tallyOf(res.steps.filter((s) => s.type === 'plat'));
     const must = opts.targets.filter((t) => t.must);
     const mustOk = must.filter((t) => tally.has(t.id));
     const mustFail = must.filter((t) => !tally.has(t.id));
@@ -430,13 +491,13 @@
         <div class="fchips">${missed.map((t) => `<span class="fc miss"><span class="dot r${catRarity(t.id)}"></span>${esc(catName(t.id))}</span>`).join('')}</div>
       </div>` : '';
     const groups = [5, 4, 3, 2].map((r) => {
-      const list = [...tally.values()].filter((e) => e.rarity === r).sort((a, b) => byBanner(a.id, b.id));
+      const list = [...regular.values()].filter((e) => e.rarity === r).sort((a, b) => byBanner(a.id, b.id));
       if (!list.length) return '';
       const copies = list.reduce((a, e) => a + e.count, 0);
       const fresh = list.filter((e) => e.fresh).length;
       return `<div class="fgroup">
         <div class="fh"><span class="dot r${r}"></span>${RARITY[r]}<span>${list.length} 種・${copies} 隻${fresh ? `・新 ${fresh}` : ''}</span></div>
-        ${sections(list.map((e) => e.id), fsub, (ids) => `<div class="fchips">${ids.map((id) => chip(tally.get(id))).join('')}</div>`)}
+        ${sections(list.map((e) => e.id), fsub, (ids) => `<div class="fchips">${ids.map((id) => chip(regular.get(id))).join('')}</div>`)}
       </div>`;
     }).join('');
 
@@ -472,6 +533,10 @@
       ${mustFail.length ? `<div class="verdict bad">必抽失敗 ${mustFail.length} 隻：${mustFail.map((t) => esc(catName(t.id))).join('、')}</div>` : ''}
       ${mustHtml}${missedHtml}
       ${groups}
+      ${platTally.size ? `<div class="fgroup plat">
+        <div class="fh">白金券抽到<span>${platTally.size} 種・${[...platTally.values()].reduce((a, e) => a + e.count, 0)} 隻</span></div>
+        <div class="fchips">${[...platTally.values()].sort((a, b) => b.rarity - a.rarity || b.id - a.id).map(chip).join('')}</div>
+      </div>` : ''}
       ${notGotHtml}
     </section>`;
   }
@@ -489,20 +554,21 @@
     let last = opts.lastId;
     for (const s of res.steps) {
       const g = groups[groups.length - 1];
-      if (g && s.type === 'single' && g.type === 'single' && g.pool === s.pool && g.pay === s.pay) {
+      if (g && s.type !== 'multi' && g.type === s.type && g.pool === s.pool && g.pay === s.pay) {
         g.cats.push(...s.cats); g.next = s.next; g.food += s.pay === 'food' ? s.cost : 0; g.tix += s.pay === 'ticket' ? 1 : 0;
+        g.plat += s.pay === 'platinum' ? 1 : 0;
       } else {
         groups.push({ type: s.type, pay: s.pay, pool: s.pool, from: s.from, next: s.next, lastBefore: last, cats: [...s.cats],
-          food: s.pay === 'food' ? s.cost : 0, tix: s.pay === 'ticket' ? 1 : 0 });
+          food: s.pay === 'food' ? s.cost : 0, tix: s.pay === 'ticket' ? 1 : 0, plat: s.pay === 'platinum' ? 1 : 0 });
       }
       last = s.cats[s.cats.length - 1].id;
     }
     // Where each step leaves you, for resuming from partial progress.
     {
-      let food = 0, tix = 0;
+      let food = 0, tix = 0, plat = 0;
       for (const g of groups) {
-        food += g.food; tix += g.tix;
-        Object.assign(g, { lastAfter: g.cats[g.cats.length - 1].id, foodSpent: food, tixSpent: tix });
+        food += g.food; tix += g.tix; plat += g.plat;
+        Object.assign(g, { lastAfter: g.cats[g.cats.length - 1].id, foodSpent: food, tixSpent: tix, platSpent: plat });
       }
     }
     // Progress is tied to this exact route; a different route starts over.
@@ -526,11 +592,12 @@
       const ev = pool.event;
       const spec = P.multiSpec(pool);
       // Card color by how the roll is paid: ticket, food single, 11-roll, step-up.
-      const kind = g.type === 'single' ? (g.pay === 'ticket' ? 'k-ticket' : 'k-food')
+      const kind = g.type === 'plat' ? 'k-plat' : g.type === 'single' ? (g.pay === 'ticket' ? 'k-ticket' : 'k-food')
         : spec.count === 15 ? 'k-step' : 'k-multi';
-      const act = g.type === 'single' ? `${g.pay === 'ticket' ? '金券' : '罐頭'}單抽 × ${g.cats.length}`
+      const act = g.type === 'plat' ? `白金券單抽 × ${g.cats.length}`
+        : g.type === 'single' ? `${g.pay === 'ticket' ? '金券' : '罐頭'}單抽 × ${g.cats.length}`
         : spec.count === 15 ? '階段轉蛋 3+5+7' : spec.guaranteed ? '保底 11 連' : '11 連';
-      const cost = [g.tix ? `券 ${g.tix}` : '', g.food ? `罐頭 ${g.food}` : ''].filter(Boolean).join(' + ');
+      const cost = [g.plat ? `白金券 ${g.plat}` : '', g.tix ? `券 ${g.tix}` : '', g.food ? `罐頭 ${g.food}` : ''].filter(Boolean).join(' + ');
       const hit = g.cats.some((c) => targets.has(c.id));
       return `<div class="step ${i < done ? 'done' : i === done ? 'next' : ''}" data-i="${i}">
         <div class="pos ${kind}">${E.posLabel(g.from)}<small>起</small></div>
@@ -551,10 +618,11 @@
         ${stars.length ? `<div class="stat"><div class="k">目標</div><div class="v">${res.got.length}<small> / ${stars.length}</small></div></div>` : ''}
         <div class="stat"><div class="k">罐頭</div><div class="v">${usedFood}<small> 用掉，剩 ${res.end.food}</small></div></div>
         <div class="stat"><div class="k">稀有轉蛋券</div><div class="v">${usedTix}<small> 用掉，剩 ${res.end.tickets}</small></div></div>
+        ${opts.platinum ? `<div class="stat"><div class="k">白金券</div><div class="v">${opts.platinum.tickets - res.end.platinum}<small> 用掉，剩 ${res.end.platinum}</small></div></div>` : ''}
         <div class="stat"><div class="k">總抽數</div><div class="v">${rolls}<small> ${opts.maxRolls ? `/ 上限 ${opts.maxRolls} 抽` : '抽'}</small></div></div>
       </div>
-      ${res.steps.length ? finalSummary(res, opts, targets, pools) : ''}
-      <div class="legend"><span class="kl k-ticket">金券單抽</span><span class="kl k-food">罐頭單抽</span><span class="kl k-multi">11 連</span><span class="kl k-step">階段轉蛋</span></div>
+      ${res.steps.length ? finalSummary(res, opts, targets, opts.pools) : ''}
+      <div class="legend"><span class="kl k-ticket">金券單抽</span><span class="kl k-food">罐頭單抽</span><span class="kl k-multi">11 連</span><span class="kl k-step">階段轉蛋</span>${opts.platinum ? '<span class="kl k-plat">白金券</span>' : ''}</div>
       <div class="legend"><span class="cat tgt">目標</span><span class="cat">沒有的角色</span><span class="cat dup">已擁有或重複</span><span><sup>保底</sup> 保底超激</span><span><sup>重抽</sup> 稀有重複重抽</span></div>
       ${groups.length ? `<div class="progress" id="progress"></div>` : ''}
       <div class="timeline">${stepsHtml}</div>
@@ -579,7 +647,7 @@
     const g = done ? r.groups[done - 1] : null;
     $('progress').innerHTML = `
       <div class="pbar"><span style="width:${(done / total) * 100}%"></span></div>
-      <div class="ptext"><b>進度 ${done} / ${total} 步</b>${g ? `<span>目前在 ${E.posLabel(g.next)}，已用罐頭 ${g.foodSpent}、金券 ${g.tixSpent}</span>` : '<span>抽完一步就勾選該步右下角的「已抽」。</span>'}</div>
+      <div class="ptext"><b>進度 ${done} / ${total} 步</b>${g ? `<span>目前在 ${E.posLabel(g.next)}，已用罐頭 ${g.foodSpent}、金券 ${g.tixSpent}${g.platSpent ? `、白金券 ${g.platSpent}` : ''}</span>` : '<span>抽完一步就勾選該步右下角的「已抽」。</span>'}</div>
       ${done && done < total ? '<button type="button" id="rebase">從目前進度重新規劃</button>' : ''}`;
     if ($('rebase')) armed($('rebase'), '從目前進度重新規劃', rebase);
     document.querySelectorAll('#results .step').forEach((el) => {
@@ -603,6 +671,8 @@
     state.last = String(g.lastAfter);
     state.food = Math.max(0, (+state.food || 0) - g.foodSpent);
     state.tickets = Math.max(0, (+state.tickets || 0) - g.tixSpent);
+    if (g.platSpent) state.platTickets = Math.max(0, (+state.platTickets || 0) - g.platSpent) || '';
+    state.platMust = state.platMust.filter((id) => !pulled.has(id));
     if (+state.maxRolls) {
       const rolled = r.groups.slice(0, done).reduce((a, x) => a + x.cats.length, 0);
       state.maxRolls = Math.max(1, state.maxRolls - rolled);
@@ -669,6 +739,18 @@
   }));
   $('stopAtTargets').addEventListener('change', () => { readForm(); renderMode(); renderTable(); });
   $('catFilter').addEventListener('input', renderTable);
+  $('platFilter').addEventListener('input', renderPlat);
+  $('platOnly').addEventListener('change', renderPlat);
+  $('platTickets').addEventListener('change', () => { readForm(); renderPlat(); });
+  $('platKey').addEventListener('change', (e) => { state.platKey = e.target.value; save(); renderPlat(); });
+  $('platList').addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-id]');
+    if (!b) return;
+    const id = +b.dataset.id, must = new Set(state.platMust);
+    must.has(id) ? must.delete(id) : must.add(id);
+    state.platMust = [...must];
+    save(); renderPlat();
+  });
   $('ctable').addEventListener('click', (e) => {
     const b = e.target.closest('button[data-own]');
     if (!b) return;

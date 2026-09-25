@@ -1,5 +1,6 @@
-// Checks the JS engine against a snapshot of bc.godfat.org
-// (?seed=2020607346&last=47&event=2026-09-30_947&lang=tw).
+// Checks the JS engine against snapshots of bc.godfat.org with
+// seed=2020607346 and last=47: event 2026-09-30_947 (guaranteed rare gacha)
+// and 2026-07-24_1063 (platinum).
 // Each fixture cell: [label, [[seedAfter, catId]]], where seedAfter is the
 // seed the site links to after taking that cell.
 const fs = require('fs');
@@ -10,12 +11,13 @@ const E = require('../src/engine.js');
 const ctx = { window: {} };
 vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../data/bc-tw.js'), 'utf8'), ctx);
 const data = ctx.window.BC_DATA.tw;
-const fixture = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixture-947.json'), 'utf8'));
-
 const seeds = new E.Seeds(2020607346);
-const pool = E.buildPool(data, '2026-09-30_947');
-let fail = 0;
+let fail = 0, total = 0;
 
+for (const [file, event] of [['fixture-947.json', '2026-09-30_947'], ['fixture-platinum-1063.json', '2026-07-24_1063']]) {
+const fixture = JSON.parse(fs.readFileSync(path.join(__dirname, file), 'utf8'));
+const pool = E.buildPool(data, event);
+total += fixture.length;
 for (const [label, [[seedAfter, catId]]] of fixture) {
   const m = /^(\d+)([AB])(R?)(G?)$/.exec(label);
   const k = E.parsePos(m[1] + m[2]);
@@ -34,8 +36,9 @@ for (const [label, [[seedAfter, catId]]] of fixture) {
   const got = [seeds.at(res.next - 1), res.last];
   if (got[0] !== seedAfter || got[1] !== catId) {
     fail++;
-    console.log(`FAIL ${label}: expected ${seedAfter}/${catId}, got ${got.join('/')}`);
+    console.log(`FAIL ${event} ${label}: expected ${seedAfter}/${catId}, got ${got.join('/')}`);
   }
 }
-console.log(`${fixture.length - fail}/${fixture.length} cells match`);
+}
+console.log(`${total - fail}/${total} cells match`);
 process.exit(fail ? 1 : 0);

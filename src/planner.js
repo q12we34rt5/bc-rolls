@@ -23,6 +23,9 @@
   const MULTI_COST = 1500;   // 11 rolls
   const STEP_UP_COST = 2100; // 300 + 750 + 1050 for 3+5+7 rolls
   const MUST_WEIGHT = 1e6;
+  // Score lost per platinum ticket used: far below a must-pull, far above
+  // any normal value, so platinum tickets are only spent to secure must-pulls.
+  const PLATINUM_COST = 1000;
 
   // Tie-break between equal scores. Default keeps the most total resources
   // (food + tickets*150). keepFood keeps cat food first, so a tickets-only
@@ -36,8 +39,20 @@
     if (keepFood) return a.f - b.f || a.t - b.t;
     return a.cap - b.cap || a.f - b.f;
   }
+  //
+  // Platinum tickets are the scarcest resource, so among equal scores the
+  // route that keeps more of them wins before anything else is compared.
   function beats(a, b, keepFood) {
-    return (cmpLeft(a, b, keepFood) || a.pb - b.pb) > 0;
+    return (a.pt - b.pt || cmpLeft(a, b, keepFood) || a.pb - b.pb) > 0;
+  }
+
+  // Optional platinum ticket banner: opts.platinum = {pool, tickets}. A
+  // platinum roll is a regular single roll on that pool paid with a platinum
+  // ticket. Its act code is pools.length * 2. Each one costs PLATINUM_COST
+  // score, so it is used only when it secures a must-pull.
+  function platinumOf(opts) {
+    const pl = opts.platinum;
+    return pl && pl.pool && pl.tickets > 0 ? pl : null;
   }
 
   // Optional cap on the number of cats rolled (an 11-roll counts 11, a
@@ -55,7 +70,9 @@
 
   // opts: {seed, startK, lastId, pools, food, tickets, targets:[{id, weight,
   //        dup, must}], copyBonus:{id: value}, uberBonus, legendBonus,
-  //        allowMulti, keepFood, maxRolls, bannerBias:[per pool], cats}
+  //        allowMulti, keepFood, maxRolls, bannerBias:[per pool],
+  //        platinum:{pool, tickets}, cats}
+  // Cats from platinum rolls only count when they are targets.
   function plan(opts) {
     const seeds = opts.seeds || new E.Seeds(opts.seed);
     const pools = opts.pools;
@@ -112,7 +129,8 @@
 
     const limit = rollLimit(opts), counting = limit < Infinity;
     const bias = pools.map((_, p) => +(opts.bannerBias || [])[p] || 0);
-    function push(k, last, mask, f, t, b, n, pb, parent, act) {
+    const plat = platinumOf(opts);
+    function push(k, last, mask, f, t, b, n, pb, pt, parent, act) {
       if (n > limit) return;
       const i = k - startK;
       const bucket = buckets[i] || (buckets[i] = new Map());
@@ -122,18 +140,18 @@
       const cap = f + SINGLE_COST * t;
       if (list) {
         for (const e of list) {
-          if (e.f >= f && e.cap >= cap && e.b >= b && e.n <= n && e.pb >= pb) return;
+          if (e.f >= f && e.cap >= cap && e.b >= b && e.n <= n && e.pb >= pb && e.pt >= pt) return;
         }
         let keep = 0;
         for (const e of list) {
-          if (f >= e.f && cap >= e.cap && b >= e.b && n <= e.n && pb >= e.pb) e.dead = true;
+          if (f >= e.f && cap >= e.cap && b >= e.b && n <= e.n && pb >= e.pb && pt >= e.pt) e.dead = true;
           else list[keep++] = e;
         }
         list.length = keep;
       } else {
         byMask.set(mask, list = []);
       }
-      list.push({ mask, f, t, cap, b, n, pb, parent, act, dead: false });
+      list.push({ mask, f, t, cap, b, n, pb, pt, parent, act, dead: false });
       labelCount++;
     }
 
@@ -149,17 +167,24 @@
           multi = { next: m.next, last: lastKey(m.last, m.next), cost: spec.cost, ...gainOf(m.cats) };
         }
         return { single, multi };
-      });
+      }).concat(plat ? [platTransition(k, last)] : []);
+    }
+
+    function platTransition(k, last) {
+      const r = E.rollAt(seeds, plat.pool, k, last);
+      const b = bit.get(r.id);
+      return { plat: { next: r.next, last: lastKey(r.id, r.next), mask: b === undefined ? 0 : 1 << b } };
     }
 
     function better(a, b) {
       if (!b) return true;
-      const sa = valueOf(a.mask) + a.b, sb = valueOf(b.mask) + b.b;
+      const pen = (L) => (plat ? (plat.tickets - L.pt) * PLATINUM_COST : 0);
+      const sa = valueOf(a.mask) + a.b - pen(a), sb = valueOf(b.mask) + b.b - pen(b);
       if (sa !== sb) return sa > sb;
       return beats(a, b, opts.keepFood);
     }
 
-    push(startK, lastKey(opts.lastId || 0, startK), 0, opts.food, opts.tickets, 0, 0, 0, null, -1);
+    push(startK, lastKey(opts.lastId || 0, startK), 0, opts.food, opts.tickets, 0, 0, 0, plat ? plat.tickets : 0, null, -1);
     let best = null;
 
     for (let i = 0; i < buckets.length; i++) {
@@ -179,14 +204,18 @@
             const canSingle = L.t > 0 || L.f >= SINGLE_COST;
             const n1 = counting ? L.n + 1 : 0;
             for (let p = 0; p < tr.length; p++) {
-              const { single: s, multi: m } = tr[p];
+              const { single: s, multi: m, plat: pr } = tr[p];
+              if (pr) {
+                if (L.pt > 0) push(pr.next, pr.last, L.mask | pr.mask, L.f, L.t, L.b, n1, L.pb, L.pt - 1, L, p * 2);
+                continue;
+              }
               if (canSingle) {
-                if (L.t > 0) push(s.next, s.last, L.mask | s.mask, L.f, L.t - 1, L.b + s.bonus, n1, L.pb + bias[p], L, p * 2);
-                else push(s.next, s.last, L.mask | s.mask, L.f - SINGLE_COST, L.t, L.b + s.bonus, n1, L.pb + bias[p], L, p * 2);
+                if (L.t > 0) push(s.next, s.last, L.mask | s.mask, L.f, L.t - 1, L.b + s.bonus, n1, L.pb + bias[p], L.pt, L, p * 2);
+                else push(s.next, s.last, L.mask | s.mask, L.f - SINGLE_COST, L.t, L.b + s.bonus, n1, L.pb + bias[p], L.pt, L, p * 2);
               }
               if (m && L.f >= m.cost) {
                 push(m.next, m.last, L.mask | m.mask, L.f - m.cost, L.t, L.b + m.bonus, counting ? L.n + multis[p].count : 0,
-                  L.pb + bias[p] * multis[p].count, L, p * 2 + 1);
+                  L.pb + bias[p] * multis[p].count, L.pt, L, p * 2 + 1);
               }
             }
           }
@@ -215,10 +244,17 @@
     const seen = new Set(opts.owned || []);
     const mark = (c) => { c.fresh = !seen.has(c.id) && c.id > 0; seen.add(c.id); return c; };
     const steps = [];
-    let k = opts.startK || 0, last = opts.lastId || 0, f = opts.food, t = opts.tickets;
+    const plat = platinumOf(opts);
+    let k = opts.startK || 0, last = opts.lastId || 0, f = opts.food, t = opts.tickets, pt = plat ? plat.tickets : 0;
     for (const a of acts) {
       const p = a >> 1, pool = pools[p];
-      if (a & 1) {
+      if (p === pools.length) {
+        const r = E.rollAt(seeds, plat.pool, k, last);
+        pt--;
+        steps.push({ pool: p, type: 'plat', cost: 1, pay: 'platinum', from: k, next: r.next,
+          cats: [mark({ id: r.id, rarity: r.rarity, pos: k, rerolled: r.rerolled })] });
+        k = r.next; last = r.id;
+      } else if (a & 1) {
         const spec = multiSpec(pool);
         const r = E.rollMulti(seeds, pool, k, last, spec.count, spec.guaranteed);
         steps.push({ pool: p, type: 'multi', cost: spec.cost, pay: 'food', from: k, next: r.next, cats: r.cats.map(mark) });
@@ -232,7 +268,7 @@
         k = r.next; last = r.id;
       }
     }
-    return { steps, end: { k, last, food: f, tickets: t, seed: k === 0 ? opts.seed : seeds.at(k - 1) } };
+    return { steps, end: { k, last, food: f, tickets: t, platinum: pt, seed: k === 0 ? opts.seed : seeds.at(k - 1) } };
   }
 
   // The last cat only matters if some pool's next raw roll is the same rare
@@ -283,7 +319,8 @@
     // Index every cat whose first copy differs from later copies; others
     // never need tracking.
     const index = new Map(), values = [];
-    for (const pool of pools) {
+    const plat = platinumOf(opts);
+    for (const pool of plat ? [...pools, plat.pool] : pools) {
       for (const list of Object.values(pool.slots)) {
         for (const id of list) {
           if (index.has(id)) continue;
@@ -313,6 +350,7 @@
     const buckets = [];
     let labelCount = 0;
 
+    const targetIdx = new Set(opts.targets.map((t) => index.get(t.id)).filter((x) => x !== undefined));
     function transitions(k, last) {
       const idx = (list) => list.map((c) => index.get(c.id)).filter((x) => x !== undefined);
       const flat = (list) => list.reduce((a, c) => a + copyValue(c.id), 0);
@@ -326,14 +364,20 @@
           multi = { next: m.next, last: lastKey(m.last, m.next), cost: spec.cost, idx: idx(m.cats), flat: flat(m.cats) };
         }
         return { single, multi };
-      });
+      }).concat(plat ? [platTransition(k, last, idx)] : []);
+    }
+
+    // Platinum rolls only score targets, and cost PLATINUM_COST each.
+    function platTransition(k, last, idx) {
+      const r = E.rollAt(seeds, plat.pool, k, last);
+      return { plat: { next: r.next, last: lastKey(r.id, r.next), idx: idx([r]).filter((i) => targetIdx.has(i)), flat: -PLATINUM_COST } };
     }
 
     const limit = rollLimit(opts), counting = limit < Infinity;
     const bias = pools.map((_, p) => +(opts.bannerBias || [])[p] || 0);
-    function push(from, tr, f, t, act, rolls) {
+    function push(from, tr, f, t, act, rolls, pt = from.pt) {
       const n = counting ? from.n + rolls : 0;
-      const pb = from.pb + bias[act >> 1] * rolls;
+      const pb = from.pb + (bias[act >> 1] || 0) * rolls;
       if (n > limit) return;
       let bits = from.bits, h1 = from.h1, h2 = from.h2, score = from.score + tr.flat;
       for (const i of tr.idx) {
@@ -348,20 +392,20 @@
       const cap = f + SINGLE_COST * t;
       let list = bucket.get(key);
       if (list) {
-        for (const e of list) if (e.f >= f && e.cap >= cap && e.score >= score && e.n <= n && e.pb >= pb) return;
-        list = list.filter((e) => !(f >= e.f && cap >= e.cap && score >= e.score && n <= e.n && pb >= e.pb));
+        for (const e of list) if (e.f >= f && e.cap >= cap && e.score >= score && e.n <= n && e.pb >= pb && e.pt >= pt) return;
+        list = list.filter((e) => !(f >= e.f && cap >= e.cap && score >= e.score && n <= e.n && pb >= e.pb && pt >= e.pt));
         bucket.set(key, list);
       } else {
         bucket.set(key, list = []);
       }
-      list.push({ last: tr.last, bits, h1, h2, score, f, t, cap, n, pb, parent: from, act });
+      list.push({ last: tr.last, bits, h1, h2, score, f, t, cap, n, pb, pt, parent: from, act });
       labelCount++;
     }
 
     const better = (a, b) => !b || a.score > b.score || (a.score === b.score && beats(a, b, opts.keepFood));
     const startLast = lastKey(opts.lastId || 0, startK);
     buckets[0] = new Map([['start', [{ last: startLast, bits: new Uint32Array(words), h1: 0, h2: 0, score: 0,
-      f: opts.food, t: opts.tickets, cap: opts.food + SINGLE_COST * opts.tickets, n: 0, pb: 0, parent: null, act: -1 }]]]);
+      f: opts.food, t: opts.tickets, cap: opts.food + SINGLE_COST * opts.tickets, n: 0, pb: 0, pt: plat ? plat.tickets : 0, parent: null, act: -1 }]]]);
     let best = null;
 
     for (let i = 0; i < buckets.length; i++) {
@@ -374,7 +418,7 @@
       let labels = [...bucket.values()].flat();
       if (labels.length > beam) {
         // keepFood counts leftover food twice so food-saving paths survive.
-        for (const L of labels) L.rank = L.score + lambda * (opts.keepFood ? L.cap + L.f : L.cap) + L.pb * 1e-9;
+        for (const L of labels) L.rank = L.score + lambda * (opts.keepFood ? L.cap + L.f : L.cap) + L.pt * 1e-6 + L.pb * 1e-9;
         labels.sort((a, b) => b.rank - a.rank);
         labels.length = beam;
       }
@@ -385,7 +429,11 @@
         if (!tr) trCache.set(L.last, tr = transitions(k, L.last));
         const canSingle = L.t > 0 || L.f >= SINGLE_COST;
         for (let p = 0; p < tr.length; p++) {
-          const { single: s, multi: m } = tr[p];
+          const { single: s, multi: m, plat: pr } = tr[p];
+          if (pr) {
+            if (L.pt > 0) push(L, pr, L.f, L.t, p * 2, 1, L.pt - 1);
+            continue;
+          }
           if (canSingle) {
             if (L.t > 0) push(L, s, L.f, L.t - 1, p * 2, 1);
             else push(L, s, L.f - SINGLE_COST, L.t, p * 2, 1);
@@ -399,7 +447,8 @@
     const gotIds = new Set(r.steps.flatMap((s) => s.cats.map((c) => c.id)));
     const got = opts.targets.filter((t) => gotIds.has(t.id));
     const missingMust = opts.targets.filter((t) => t.must && !gotIds.has(t.id));
-    return { ...r, got, missingMust, mustOk: !missingMust.length, score: best.score, stats: { labels: labelCount } };
+    const platUsed = r.steps.filter((x) => x.type === 'plat').length;
+    return { ...r, got, missingMust, mustOk: !missingMust.length, score: best.score + platUsed * PLATINUM_COST, stats: { labels: labelCount } };
   }
 
   const api = { plan, planCollect, SINGLE_COST, MULTI_COST, STEP_UP_COST, multiSpec };
