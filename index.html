@@ -135,13 +135,19 @@ button.ghost { background: none; border: none; color: var(--ink-3); padding: 2px
 button.ghost:hover { color: var(--bad); }
 
 .banners { display: grid; gap: 6px; max-height: 300px; overflow: auto; }
-.banner { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; cursor: pointer; align-items: start; }
+.banner { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 2px 10px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; cursor: pointer; align-items: start; }
 .banner:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
 .banner input { margin-top: 4px; }
 .banner .t { font-weight: 500; line-height: 1.4; }
 .banner .m { grid-column: 2; font-size: 12px; color: var(--ink-3); display: flex; flex-wrap: wrap; gap: 4px 10px; }
 .tag { font-size: 11px; font-weight: 700; padding: 0 6px; border-radius: 5px; border: 1px solid currentColor; line-height: 18px; white-space: nowrap; }
 .tag.g { color: var(--accent-ink); }
+.banner .t { grid-column: 2; }
+.bw { grid-column: 3; grid-row: 1 / span 2; align-self: center; display: grid; justify-items: center; gap: 2px; cursor: default; }
+.bw small { font-size: 11px; font-weight: 700; color: var(--ink-3); }
+.bw input { width: 58px; padding: 3px 6px; margin: 0; font: 12px var(--font-mono); text-align: right; }
+.bw.set small { color: var(--accent-ink); }
+.bw.set input { border-color: var(--accent); }
 
 .tools { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .tools input[type=search] { flex: 1 1 160px; }
@@ -329,7 +335,7 @@ textarea { font: 13px var(--font-mono); color: var(--ink); background: var(--sur
           <button type="button" data-range="7">＋7 天</button>
         </div>
         <div class="banners" id="banners"></div>
-        <p class="hint">列出區間內任何一天有開的卡池。勾選的卡池都會被當成可以隨時切換，例如用調整時區的方式切到前一天或後一天的卡池。同一個卡池如果不同期的機率或保底不同，會分開列出。</p>
+        <p class="hint">勾選後可以設定卡池「偏好」，例如 0.1：只有在分數和花費都一樣時才用來決勝，在該池每抽一抽累積一次，越高越優先在那池抽，卡池切換也會變少。不會讓程式多抽。列出區間內任何一天有開的卡池。勾選的卡池都會被當成可以隨時切換，例如用調整時區的方式切到前一天或後一天的卡池。同一個卡池如果不同期的機率或保底不同，會分開列出。</p>
       </section>
 
       <section class="panel">

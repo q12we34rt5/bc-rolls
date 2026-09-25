@@ -16,6 +16,7 @@
     // Per-cat settings: w = first copy value, d = each extra copy, must.
     prefs: {},
     uberBonus: 0.5, legendBonus: 1, allowMulti: true, stopAtTargets: true, keepFood: false, maxRolls: '',
+    bannerBias: {}, // event key -> tie-break preference per roll on that banner
     mode: 'exact', rv2: 0.2, rv3: 1, rv4: 5, rv5: 8, dv2: 0, dv3: 0, dv4: 0.5, dv5: 1, beam: 1000, owned: [],
   });
 
@@ -140,9 +141,12 @@
         const g = ev.guaranteed === 11 ? '<span class="tag g">保底 11 連</span>'
           : ev.guaranteed === 15 ? '<span class="tag g">階段轉蛋</span>' : '';
         const leg = ev.legend ? '<span>含傳說</span>' : '';
-        return `<label class="banner"><input type="checkbox" value="${key}" ${state.selected.includes(key) ? 'checked' : ''}>
+        const on = state.selected.includes(key);
+        const bw = state.bannerBias[key] ?? 0;
+        return `<label class="banner"><input type="checkbox" value="${key}" ${on ? 'checked' : ''}>
           <span class="t">${esc(shortName(ev.name))}</span>
-          <span class="m"><span>${ev.start.slice(5)} ～ ${ev.end.slice(5)}</span><span>#${ev.id}</span>${g}${leg}</span></label>`;
+          <span class="m"><span>${ev.start.slice(5)} ～ ${ev.end.slice(5)}</span><span>#${ev.id}</span>${g}${leg}</span>
+          ${on ? `<span class="bw ${bw ? 'set' : ''}"><small>偏好</small><input type="number" min="0" step="any" value="${bw}" data-bw="${key}" aria-label="卡池偏好"></span>` : ''}</label>`;
       }).join('');
     }
     renderTable();
@@ -164,6 +168,7 @@
   const isStar = (pr) => (isSet(pr.w) && +pr.w > 0) || pr.must;
 
   // Defaults shown as placeholders and used when a field is blank.
+  // Values used when a cat's own fields are blank.
   function defaults(id) {
     const r = catRarity(id);
     if (state.mode !== 'collect') {
@@ -349,6 +354,7 @@
       targets, copyBonus,
       uberBonus: collect || !state.stopAtTargets ? state.uberBonus : 0,
       legendBonus: collect || !state.stopAtTargets ? state.legendBonus : 0,
+      bannerBias: pools.map((p) => +state.bannerBias[p.key] || 0),
       allowMulti: state.allowMulti, keepFood: state.keepFood, maxRolls: +state.maxRolls || 0, cats: data().cats,
       owned: state.owned, beam: state.beam,
       rarityValue: { 2: state.rv2, 3: state.rv3, 4: state.rv4, 5: state.rv5 },
@@ -644,7 +650,17 @@
     renderBanners(); save();
   }));
   $('banners').addEventListener('change', (e) => {
-    state.selected = [...$('banners').querySelectorAll('input:checked')].map((x) => x.value);
+    const key = e.target.dataset.bw;
+    if (key) {
+      const v = parseFloat(e.target.value);
+      if (v > 0) state.bannerBias[key] = v; else delete state.bannerBias[key];
+      e.target.closest('.bw').classList.toggle('set', key in state.bannerBias);
+    } else {
+      state.selected = [...$('banners').querySelectorAll('input[type=checkbox]:checked')].map((x) => x.value);
+      const scroll = $('banners').scrollTop;
+      renderBanners();
+      $('banners').scrollTop = scroll;
+    }
     renderTable(); save();
   });
   document.querySelectorAll('input[name=mode]').forEach((el) => el.addEventListener('change', () => {

@@ -28,9 +28,16 @@
   // (food + tickets*150). keepFood keeps cat food first, so a tickets-only
   // route wins whenever one reaches the same score, and food (including
   // guaranteed rolls) is spent only when needed.
-  function moreLeft(a, b, keepFood) {
-    if (keepFood) return a.f !== b.f ? a.f > b.f : a.t > b.t;
-    return a.cap !== b.cap ? a.cap > b.cap : a.f > b.f;
+  //
+  // Only when resources tie too, the banner preference decides: bannerBias[p]
+  // is added once per cat rolled on banner p, and the higher total wins. It
+  // never outranks score or resources, so it can't make a plan roll more.
+  function cmpLeft(a, b, keepFood) {
+    if (keepFood) return a.f - b.f || a.t - b.t;
+    return a.cap - b.cap || a.f - b.f;
+  }
+  function beats(a, b, keepFood) {
+    return (cmpLeft(a, b, keepFood) || a.pb - b.pb) > 0;
   }
 
   // Optional cap on the number of cats rolled (an 11-roll counts 11, a
@@ -48,7 +55,7 @@
 
   // opts: {seed, startK, lastId, pools, food, tickets, targets:[{id, weight,
   //        dup, must}], copyBonus:{id: value}, uberBonus, legendBonus,
-  //        allowMulti, keepFood, maxRolls, cats}
+  //        allowMulti, keepFood, maxRolls, bannerBias:[per pool], cats}
   function plan(opts) {
     const seeds = opts.seeds || new E.Seeds(opts.seed);
     const pools = opts.pools;
@@ -104,7 +111,8 @@
     const lastKey = makeLastKey(seeds, pools, cats);
 
     const limit = rollLimit(opts), counting = limit < Infinity;
-    function push(k, last, mask, f, t, b, n, parent, act) {
+    const bias = pools.map((_, p) => +(opts.bannerBias || [])[p] || 0);
+    function push(k, last, mask, f, t, b, n, pb, parent, act) {
       if (n > limit) return;
       const i = k - startK;
       const bucket = buckets[i] || (buckets[i] = new Map());
@@ -114,18 +122,18 @@
       const cap = f + SINGLE_COST * t;
       if (list) {
         for (const e of list) {
-          if (e.f >= f && e.cap >= cap && e.b >= b && e.n <= n) return;
+          if (e.f >= f && e.cap >= cap && e.b >= b && e.n <= n && e.pb >= pb) return;
         }
         let keep = 0;
         for (const e of list) {
-          if (f >= e.f && cap >= e.cap && b >= e.b && n <= e.n) e.dead = true;
+          if (f >= e.f && cap >= e.cap && b >= e.b && n <= e.n && pb >= e.pb) e.dead = true;
           else list[keep++] = e;
         }
         list.length = keep;
       } else {
         byMask.set(mask, list = []);
       }
-      list.push({ mask, f, t, cap, b, n, parent, act, dead: false });
+      list.push({ mask, f, t, cap, b, n, pb, parent, act, dead: false });
       labelCount++;
     }
 
@@ -148,10 +156,10 @@
       if (!b) return true;
       const sa = valueOf(a.mask) + a.b, sb = valueOf(b.mask) + b.b;
       if (sa !== sb) return sa > sb;
-      return moreLeft(a, b, opts.keepFood);
+      return beats(a, b, opts.keepFood);
     }
 
-    push(startK, lastKey(opts.lastId || 0, startK), 0, opts.food, opts.tickets, 0, 0, null, -1);
+    push(startK, lastKey(opts.lastId || 0, startK), 0, opts.food, opts.tickets, 0, 0, 0, null, -1);
     let best = null;
 
     for (let i = 0; i < buckets.length; i++) {
@@ -173,11 +181,12 @@
             for (let p = 0; p < tr.length; p++) {
               const { single: s, multi: m } = tr[p];
               if (canSingle) {
-                if (L.t > 0) push(s.next, s.last, L.mask | s.mask, L.f, L.t - 1, L.b + s.bonus, n1, L, p * 2);
-                else push(s.next, s.last, L.mask | s.mask, L.f - SINGLE_COST, L.t, L.b + s.bonus, n1, L, p * 2);
+                if (L.t > 0) push(s.next, s.last, L.mask | s.mask, L.f, L.t - 1, L.b + s.bonus, n1, L.pb + bias[p], L, p * 2);
+                else push(s.next, s.last, L.mask | s.mask, L.f - SINGLE_COST, L.t, L.b + s.bonus, n1, L.pb + bias[p], L, p * 2);
               }
               if (m && L.f >= m.cost) {
-                push(m.next, m.last, L.mask | m.mask, L.f - m.cost, L.t, L.b + m.bonus, counting ? L.n + multis[p].count : 0, L, p * 2 + 1);
+                push(m.next, m.last, L.mask | m.mask, L.f - m.cost, L.t, L.b + m.bonus, counting ? L.n + multis[p].count : 0,
+                  L.pb + bias[p] * multis[p].count, L, p * 2 + 1);
               }
             }
           }
@@ -321,8 +330,10 @@
     }
 
     const limit = rollLimit(opts), counting = limit < Infinity;
+    const bias = pools.map((_, p) => +(opts.bannerBias || [])[p] || 0);
     function push(from, tr, f, t, act, rolls) {
       const n = counting ? from.n + rolls : 0;
+      const pb = from.pb + bias[act >> 1] * rolls;
       if (n > limit) return;
       let bits = from.bits, h1 = from.h1, h2 = from.h2, score = from.score + tr.flat;
       for (const i of tr.idx) {
@@ -337,20 +348,20 @@
       const cap = f + SINGLE_COST * t;
       let list = bucket.get(key);
       if (list) {
-        for (const e of list) if (e.f >= f && e.cap >= cap && e.score >= score && e.n <= n) return;
-        list = list.filter((e) => !(f >= e.f && cap >= e.cap && score >= e.score && n <= e.n));
+        for (const e of list) if (e.f >= f && e.cap >= cap && e.score >= score && e.n <= n && e.pb >= pb) return;
+        list = list.filter((e) => !(f >= e.f && cap >= e.cap && score >= e.score && n <= e.n && pb >= e.pb));
         bucket.set(key, list);
       } else {
         bucket.set(key, list = []);
       }
-      list.push({ last: tr.last, bits, h1, h2, score, f, t, cap, n, parent: from, act });
+      list.push({ last: tr.last, bits, h1, h2, score, f, t, cap, n, pb, parent: from, act });
       labelCount++;
     }
 
-    const better = (a, b) => !b || a.score > b.score || (a.score === b.score && moreLeft(a, b, opts.keepFood));
+    const better = (a, b) => !b || a.score > b.score || (a.score === b.score && beats(a, b, opts.keepFood));
     const startLast = lastKey(opts.lastId || 0, startK);
     buckets[0] = new Map([['start', [{ last: startLast, bits: new Uint32Array(words), h1: 0, h2: 0, score: 0,
-      f: opts.food, t: opts.tickets, cap: opts.food + SINGLE_COST * opts.tickets, n: 0, parent: null, act: -1 }]]]);
+      f: opts.food, t: opts.tickets, cap: opts.food + SINGLE_COST * opts.tickets, n: 0, pb: 0, parent: null, act: -1 }]]]);
     let best = null;
 
     for (let i = 0; i < buckets.length; i++) {
@@ -363,7 +374,7 @@
       let labels = [...bucket.values()].flat();
       if (labels.length > beam) {
         // keepFood counts leftover food twice so food-saving paths survive.
-        for (const L of labels) L.rank = L.score + lambda * (opts.keepFood ? L.cap + L.f : L.cap);
+        for (const L of labels) L.rank = L.score + lambda * (opts.keepFood ? L.cap + L.f : L.cap) + L.pb * 1e-9;
         labels.sort((a, b) => b.rank - a.rank);
         labels.length = beam;
       }
