@@ -477,15 +477,15 @@
     const usedFood = opts.food - res.end.food, usedTix = opts.tickets - res.end.tickets;
     const rolls = res.steps.reduce((a, s) => a + s.cats.length, 0);
 
-    // Group consecutive singles on the same banner.
+    // Group consecutive singles on the same banner paid the same way.
     const groups = [];
     let last = opts.lastId;
     for (const s of res.steps) {
       const g = groups[groups.length - 1];
-      if (g && s.type === 'single' && g.type === 'single' && g.pool === s.pool) {
+      if (g && s.type === 'single' && g.type === 'single' && g.pool === s.pool && g.pay === s.pay) {
         g.cats.push(...s.cats); g.next = s.next; g.food += s.pay === 'food' ? s.cost : 0; g.tix += s.pay === 'ticket' ? 1 : 0;
       } else {
-        groups.push({ type: s.type, pool: s.pool, from: s.from, next: s.next, lastBefore: last, cats: [...s.cats],
+        groups.push({ type: s.type, pay: s.pay, pool: s.pool, from: s.from, next: s.next, lastBefore: last, cats: [...s.cats],
           food: s.pay === 'food' ? s.cost : 0, tix: s.pay === 'ticket' ? 1 : 0 });
       }
       last = s.cats[s.cats.length - 1].id;
@@ -506,14 +506,17 @@
       const pool = pools[g.pool];
       const ev = pool.event;
       const spec = P.multiSpec(pool);
-      const act = g.type === 'single' ? `單抽 × ${g.cats.length}`
+      // Card color by how the roll is paid: ticket, food single, 11-roll, step-up.
+      const kind = g.type === 'single' ? (g.pay === 'ticket' ? 'k-ticket' : 'k-food')
+        : spec.count === 15 ? 'k-step' : 'k-multi';
+      const act = g.type === 'single' ? `${g.pay === 'ticket' ? '金券' : '罐頭'}單抽 × ${g.cats.length}`
         : spec.count === 15 ? '階段轉蛋 3+5+7' : spec.guaranteed ? '保底 11 連' : '11 連';
       const cost = [g.tix ? `券 ${g.tix}` : '', g.food ? `罐頭 ${g.food}` : ''].filter(Boolean).join(' + ');
       const hit = g.cats.some((c) => targets.has(c.id));
       return `<div class="step">
-        <div class="pos">${E.posLabel(g.from)}<small>起</small></div>
-        <div class="card ${hit ? 'hit' : ''}">
-          <div class="hd"><span class="act">${act}</span><span class="bn">${esc(shortName(ev.name))}</span><span class="cost">${cost}</span></div>
+        <div class="pos ${kind}">${E.posLabel(g.from)}<small>起</small></div>
+        <div class="card ${kind}">
+          <div class="hd"><span class="act">${act}</span><span class="bn">${esc(shortName(ev.name))}</span>${hit ? '<span class="hitTag">含目標</span>' : ''}<span class="cost">${cost}</span></div>
           <div class="cats">${g.cats.map((c) => catChip(c, targets, g.from)).join('')}</div>
           <div class="ft"><span>下一格 ${E.posLabel(g.next)}</span><a href="${seedLink(seeds, opts, g.from, g.lastBefore, pool.key)}" target="_blank" rel="noopener">在 bc.godfat.org 核對 ↗</a></div>
         </div>
@@ -531,6 +534,7 @@
         <div class="stat"><div class="k">總抽數</div><div class="v">${rolls}<small> 抽</small></div></div>
       </div>
       ${res.steps.length ? finalSummary(res, opts, targets, pools) : ''}
+      <div class="legend"><span class="kl k-ticket">金券單抽</span><span class="kl k-food">罐頭單抽</span><span class="kl k-multi">11 連</span><span class="kl k-step">階段轉蛋</span></div>
       <div class="legend"><span class="cat tgt">目標</span><span class="cat">沒有的角色</span><span class="cat dup">已擁有或重複</span><span><sup>保底</sup> 保底超激</span><span><sup>重抽</sup> 稀有重複重抽</span></div>
       <div class="timeline">${stepsHtml}</div>
       ${res.steps.length ? `<div class="panel endbox">
