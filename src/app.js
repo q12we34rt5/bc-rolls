@@ -15,7 +15,7 @@
     selected: [],
     // Per-cat settings: w = first copy value, d = each extra copy, must.
     prefs: {},
-    uberBonus: 0.5, legendBonus: 1, allowMulti: true, stopAtTargets: true, keepFood: false,
+    uberBonus: 0.5, legendBonus: 1, allowMulti: true, stopAtTargets: true, keepFood: false, maxRolls: '',
     mode: 'exact', rv2: 0.2, rv3: 1, rv4: 5, rv5: 8, dv2: 0, dv3: 0, dv4: 0.5, dv5: 1, beam: 1000, owned: [],
   });
 
@@ -93,7 +93,7 @@
   }
 
   function fillForm() {
-    for (const k of ['seed', 'last', 'pos', 'food', 'tickets', 'dateFrom', 'dateTo', 'lang', 'uberBonus', 'legendBonus',
+    for (const k of ['seed', 'last', 'pos', 'food', 'tickets', 'maxRolls', 'dateFrom', 'dateTo', 'lang', 'uberBonus', 'legendBonus',
       'rv2', 'rv3', 'rv4', 'rv5', 'dv2', 'dv3', 'dv4', 'dv5', 'beam']) {
       $(k).value = state[k];
     }
@@ -116,6 +116,7 @@
     state.allowMulti = $('allowMulti').checked;
     state.stopAtTargets = $('stopAtTargets').checked;
     state.keepFood = $('keepFood').value === '1';
+    { const m = Math.floor(parseFloat($('maxRolls').value)); state.maxRolls = m > 0 ? m : ''; }
     for (const k of ['rv2', 'rv3', 'rv4', 'rv5', 'dv2', 'dv3', 'dv4', 'dv5']) state[k] = Math.max(0, parseFloat($(k).value) || 0);
     state.beam = Math.max(50, parseInt($('beam').value, 10) || 1000);
     save();
@@ -348,7 +349,7 @@
       targets, copyBonus,
       uberBonus: collect || !state.stopAtTargets ? state.uberBonus : 0,
       legendBonus: collect || !state.stopAtTargets ? state.legendBonus : 0,
-      allowMulti: state.allowMulti, keepFood: state.keepFood, cats: data().cats,
+      allowMulti: state.allowMulti, keepFood: state.keepFood, maxRolls: +state.maxRolls || 0, cats: data().cats,
       owned: state.owned, beam: state.beam,
       rarityValue: { 2: state.rv2, 3: state.rv3, 4: state.rv4, 5: state.rv5 },
       dupValue: { 2: state.dv2, 3: state.dv3, 4: state.dv4, 5: state.dv5 },
@@ -544,7 +545,7 @@
         ${stars.length ? `<div class="stat"><div class="k">目標</div><div class="v">${res.got.length}<small> / ${stars.length}</small></div></div>` : ''}
         <div class="stat"><div class="k">罐頭</div><div class="v">${usedFood}<small> 用掉，剩 ${res.end.food}</small></div></div>
         <div class="stat"><div class="k">稀有轉蛋券</div><div class="v">${usedTix}<small> 用掉，剩 ${res.end.tickets}</small></div></div>
-        <div class="stat"><div class="k">總抽數</div><div class="v">${rolls}<small> 抽</small></div></div>
+        <div class="stat"><div class="k">總抽數</div><div class="v">${rolls}<small> ${opts.maxRolls ? `/ 上限 ${opts.maxRolls} 抽` : '抽'}</small></div></div>
       </div>
       ${res.steps.length ? finalSummary(res, opts, targets, pools) : ''}
       <div class="legend"><span class="kl k-ticket">金券單抽</span><span class="kl k-food">罐頭單抽</span><span class="kl k-multi">11 連</span><span class="kl k-step">階段轉蛋</span></div>
@@ -596,6 +597,10 @@
     state.last = String(g.lastAfter);
     state.food = Math.max(0, (+state.food || 0) - g.foodSpent);
     state.tickets = Math.max(0, (+state.tickets || 0) - g.tixSpent);
+    if (+state.maxRolls) {
+      const rolled = r.groups.slice(0, done).reduce((a, x) => a + x.cats.length, 0);
+      state.maxRolls = Math.max(1, state.maxRolls - rolled);
+    }
     state.owned = [...new Set([...state.owned, ...pulled])].sort((a, b) => a - b);
     for (const id of pulled) {
       const pr = state.prefs[id];

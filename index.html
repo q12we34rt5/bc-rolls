@@ -364,6 +364,10 @@ textarea { font: 13px var(--font-mono); color: var(--ink); background: var(--sur
           </div>
           <label class="f">搜尋寬度（越大越準、越慢）<input type="number" id="beam" min="50" step="any"></label>
         </div>
+        <label class="f">抽數上限（留空＝不限制，自動找最佳）
+          <input type="number" id="maxRolls" min="1" step="any" placeholder="不限制">
+        </label>
+        <p class="hint">有上限時，會在這個抽數內找最好的結果。11 連算 11 抽，階段轉蛋算 15 抽。</p>
         <label class="check"><input type="checkbox" id="allowMulti"> 允許 11 連／階段轉蛋（用罐頭）</label>
         <label class="f">分數一樣時，選哪條路線
           <select id="keepFood">

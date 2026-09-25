@@ -33,6 +33,14 @@
     return a.cap !== b.cap ? a.cap > b.cap : a.f > b.f;
   }
 
+  // Optional cap on the number of cats rolled (an 11-roll counts 11, a
+  // step-up 15). Without a cap the count isn't tracked, so states merge as
+  // before; with one it becomes part of the dominance check.
+  function rollLimit(opts) {
+    const lim = Math.floor(+opts.maxRolls);
+    return lim > 0 ? lim : Infinity;
+  }
+
   function multiSpec(pool) {
     if (pool.guaranteed === 15) return { count: 15, cost: STEP_UP_COST, guaranteed: true };
     return { count: 11, cost: MULTI_COST, guaranteed: pool.guaranteed === 11 };
@@ -40,7 +48,7 @@
 
   // opts: {seed, startK, lastId, pools, food, tickets, targets:[{id, weight,
   //        dup, must}], copyBonus:{id: value}, uberBonus, legendBonus,
-  //        allowMulti, keepFood, cats}
+  //        allowMulti, keepFood, maxRolls, cats}
   function plan(opts) {
     const seeds = opts.seeds || new E.Seeds(opts.seed);
     const pools = opts.pools;
@@ -95,7 +103,9 @@
 
     const lastKey = makeLastKey(seeds, pools, cats);
 
-    function push(k, last, mask, f, t, b, parent, act) {
+    const limit = rollLimit(opts), counting = limit < Infinity;
+    function push(k, last, mask, f, t, b, n, parent, act) {
+      if (n > limit) return;
       const i = k - startK;
       const bucket = buckets[i] || (buckets[i] = new Map());
       let byMask = bucket.get(last);
@@ -104,18 +114,18 @@
       const cap = f + SINGLE_COST * t;
       if (list) {
         for (const e of list) {
-          if (e.f >= f && e.cap >= cap && e.b >= b) return;
+          if (e.f >= f && e.cap >= cap && e.b >= b && e.n <= n) return;
         }
-        let n = 0;
+        let keep = 0;
         for (const e of list) {
-          if (f >= e.f && cap >= e.cap && b >= e.b) e.dead = true;
-          else list[n++] = e;
+          if (f >= e.f && cap >= e.cap && b >= e.b && n <= e.n) e.dead = true;
+          else list[keep++] = e;
         }
-        list.length = n;
+        list.length = keep;
       } else {
         byMask.set(mask, list = []);
       }
-      list.push({ mask, f, t, cap, b, parent, act, dead: false });
+      list.push({ mask, f, t, cap, b, n, parent, act, dead: false });
       labelCount++;
     }
 
@@ -141,7 +151,7 @@
       return moreLeft(a, b, opts.keepFood);
     }
 
-    push(startK, lastKey(opts.lastId || 0, startK), 0, opts.food, opts.tickets, 0, null, -1);
+    push(startK, lastKey(opts.lastId || 0, startK), 0, opts.food, opts.tickets, 0, 0, null, -1);
     let best = null;
 
     for (let i = 0; i < buckets.length; i++) {
@@ -159,14 +169,15 @@
             if (better(L, best)) best = L;
 
             const canSingle = L.t > 0 || L.f >= SINGLE_COST;
+            const n1 = counting ? L.n + 1 : 0;
             for (let p = 0; p < tr.length; p++) {
               const { single: s, multi: m } = tr[p];
               if (canSingle) {
-                if (L.t > 0) push(s.next, s.last, L.mask | s.mask, L.f, L.t - 1, L.b + s.bonus, L, p * 2);
-                else push(s.next, s.last, L.mask | s.mask, L.f - SINGLE_COST, L.t, L.b + s.bonus, L, p * 2);
+                if (L.t > 0) push(s.next, s.last, L.mask | s.mask, L.f, L.t - 1, L.b + s.bonus, n1, L, p * 2);
+                else push(s.next, s.last, L.mask | s.mask, L.f - SINGLE_COST, L.t, L.b + s.bonus, n1, L, p * 2);
               }
               if (m && L.f >= m.cost) {
-                push(m.next, m.last, L.mask | m.mask, L.f - m.cost, L.t, L.b + m.bonus, L, p * 2 + 1);
+                push(m.next, m.last, L.mask | m.mask, L.f - m.cost, L.t, L.b + m.bonus, counting ? L.n + multis[p].count : 0, L, p * 2 + 1);
               }
             }
           }
@@ -309,7 +320,10 @@
       });
     }
 
-    function push(from, tr, f, t, act) {
+    const limit = rollLimit(opts), counting = limit < Infinity;
+    function push(from, tr, f, t, act, rolls) {
+      const n = counting ? from.n + rolls : 0;
+      if (n > limit) return;
       let bits = from.bits, h1 = from.h1, h2 = from.h2, score = from.score + tr.flat;
       for (const i of tr.idx) {
         const w = i >> 5, m = 1 << (i & 31);
@@ -323,20 +337,20 @@
       const cap = f + SINGLE_COST * t;
       let list = bucket.get(key);
       if (list) {
-        for (const e of list) if (e.f >= f && e.cap >= cap && e.score >= score) return;
-        list = list.filter((e) => !(f >= e.f && cap >= e.cap && score >= e.score));
+        for (const e of list) if (e.f >= f && e.cap >= cap && e.score >= score && e.n <= n) return;
+        list = list.filter((e) => !(f >= e.f && cap >= e.cap && score >= e.score && n <= e.n));
         bucket.set(key, list);
       } else {
         bucket.set(key, list = []);
       }
-      list.push({ last: tr.last, bits, h1, h2, score, f, t, cap, parent: from, act });
+      list.push({ last: tr.last, bits, h1, h2, score, f, t, cap, n, parent: from, act });
       labelCount++;
     }
 
     const better = (a, b) => !b || a.score > b.score || (a.score === b.score && moreLeft(a, b, opts.keepFood));
     const startLast = lastKey(opts.lastId || 0, startK);
     buckets[0] = new Map([['start', [{ last: startLast, bits: new Uint32Array(words), h1: 0, h2: 0, score: 0,
-      f: opts.food, t: opts.tickets, cap: opts.food + SINGLE_COST * opts.tickets, parent: null, act: -1 }]]]);
+      f: opts.food, t: opts.tickets, cap: opts.food + SINGLE_COST * opts.tickets, n: 0, parent: null, act: -1 }]]]);
     let best = null;
 
     for (let i = 0; i < buckets.length; i++) {
@@ -362,10 +376,10 @@
         for (let p = 0; p < tr.length; p++) {
           const { single: s, multi: m } = tr[p];
           if (canSingle) {
-            if (L.t > 0) push(L, s, L.f, L.t - 1, p * 2);
-            else push(L, s, L.f - SINGLE_COST, L.t, p * 2);
+            if (L.t > 0) push(L, s, L.f, L.t - 1, p * 2, 1);
+            else push(L, s, L.f - SINGLE_COST, L.t, p * 2, 1);
           }
-          if (m && L.f >= m.cost) push(L, m, L.f - m.cost, L.t, p * 2 + 1);
+          if (m && L.f >= m.cost) push(L, m, L.f - m.cost, L.t, p * 2 + 1, multis[p].count);
         }
       }
     }
