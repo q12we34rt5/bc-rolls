@@ -201,6 +201,30 @@
     renderTable();
   }
 
+  // Cats listed by banner (in section 2's order), then id descending. A cat
+  // in several banners goes under the first one. sections() splits a sorted
+  // list into per-banner runs; headings only appear with 2+ banners.
+  function bannerGrouping() {
+    const banners = bannersIn(state.dateFrom, state.dateTo).filter((k) => state.selected.includes(k));
+    const bannerOf = new Map();
+    banners.forEach((key, i) => {
+      const pool = E.buildPool(data(), key);
+      Object.values(pool.slots).flat().forEach((id) => { if (!bannerOf.has(id)) bannerOf.set(id, i); });
+    });
+    const byBanner = (a, b) => (bannerOf.get(a) ?? 1e9) - (bannerOf.get(b) ?? 1e9) || b - a;
+    function sections(sorted, heading, body) {
+      const runs = [];
+      for (const id of sorted) {
+        const i = bannerOf.get(id) ?? -1;
+        if (!runs.length || runs[runs.length - 1].i !== i) runs.push({ i, ids: [] });
+        runs[runs.length - 1].ids.push(id);
+      }
+      return runs.map((run) => (banners.length > 1 && run.i >= 0
+        ? heading(shortName(data().events[banners[run.i]].name)) : '') + body(run.ids)).join('');
+    }
+    return { byBanner, sections };
+  }
+
   function renderTable() {
     updateCounts();
     const q = $('catFilter').value.trim();
@@ -208,7 +232,8 @@
     const inPools = poolCatIds();
     const match = (id) => (!q || catName(id).includes(q) || String(id) === q) && (!only || isCustom(prefOf(id)));
     const ids = [...inPools].filter(match);
-    const outside = Object.keys(state.prefs).map(Number).filter((id) => !inPools.has(id) && isCustom(prefOf(id)) && match(id));
+    const outside = Object.keys(state.prefs).map(Number).filter((id) => !inPools.has(id) && isCustom(prefOf(id)) && match(id))
+      .sort((a, b) => b - a);
     // Keep groups the viewer opened or closed as they were.
     const wasOpen = new Map([...$('ctable').querySelectorAll('details[data-g]')].map((d) => [d.dataset.g, d.open]));
     tableGroups = {};
@@ -220,14 +245,17 @@
     const ownBtns = (g) => `<span class="gb">
         <button type="button" data-own="${g}" data-on="1">全部擁有</button>
         <button type="button" data-own="${g}" data-on="0">全部取消</button></span>`;
+    const { byBanner, sections } = bannerGrouping();
+    const rows = (list) => sections(list, (name) => `<div class="bsub">${esc(name)}</div>`,
+      (ids) => ids.map(rowHtml).join(''));
     const groups = [5, 4, 3, 2].map((r) => {
-      const list = ids.filter((id) => catRarity(id) === r).sort((a, b) => a - b);
+      const list = ids.filter((id) => catRarity(id) === r).sort(byBanner);
       if (!list.length) return '';
       const set = list.filter((id) => isCustom(prefOf(id))).length;
       const own = list.filter((id) => state.owned.includes(id)).length;
       const open = wasOpen.has(String(r)) ? wasOpen.get(String(r)) : r >= 4 || set || q || only;
       return `<details class="r${r}" data-g="${r}" ${open ? 'open' : ''}><summary><span class="dot"></span>${RARITY[r]}
-        <span class="c">${list.length} 隻・擁有 ${own}${set ? `・設定 ${set}` : ''}</span>${ownBtns(r)}</summary>${head(r, list)}${list.map(rowHtml).join('')}</details>`;
+        <span class="c">${list.length} 隻・擁有 ${own}${set ? `・設定 ${set}` : ''}</span>${ownBtns(r)}</summary>${head(r, list)}${rows(list)}</details>`;
     }).join('');
     const other = outside.length ? `<details open data-g="x"><summary>不在勾選卡池 <span class="c">設定會保留，換卡池時生效</span>${ownBtns('x')}</summary>${head('x', outside)}${outside.map(rowHtml).join('')}</details>` : '';
     const scroll = $('ctable').scrollTop;
@@ -380,7 +408,8 @@
       ].join('');
       return `<span class="${cls}"><span class="dot r${e.rarity}"></span>${esc(catName(e.id))}${e.count > 1 ? `<b class="x">×${e.count}</b>` : ''}${tags}</span>`;
     };
-    const rank = (e) => (targets.get(e.id)?.must ? 0 : targets.has(e.id) ? 1 : e.fresh ? 2 : 3);
+    const { byBanner, sections } = bannerGrouping();
+    const fsub = (name) => `<div class="fsub">${esc(name)}</div>`;
 
     const mustHtml = must.length ? `<div class="fline">
         <span class="fk">必抽</span>
@@ -394,14 +423,13 @@
         <div class="fchips">${missed.map((t) => `<span class="fc miss"><span class="dot r${catRarity(t.id)}"></span>${esc(catName(t.id))}</span>`).join('')}</div>
       </div>` : '';
     const groups = [5, 4, 3, 2].map((r) => {
-      const list = [...tally.values()].filter((e) => e.rarity === r)
-        .sort((a, b) => rank(a) - rank(b) || b.count - a.count || a.id - b.id);
+      const list = [...tally.values()].filter((e) => e.rarity === r).sort((a, b) => byBanner(a.id, b.id));
       if (!list.length) return '';
       const copies = list.reduce((a, e) => a + e.count, 0);
       const fresh = list.filter((e) => e.fresh).length;
       return `<div class="fgroup">
         <div class="fh"><span class="dot r${r}"></span>${RARITY[r]}<span>${list.length} 種・${copies} 隻${fresh ? `・新 ${fresh}` : ''}</span></div>
-        <div class="fchips">${list.map(chip).join('')}</div>
+        ${sections(list.map((e) => e.id), fsub, (ids) => `<div class="fchips">${ids.map((id) => chip(tally.get(id))).join('')}</div>`)}
       </div>`;
     }).join('');
 
@@ -417,18 +445,17 @@
     const notGotHtml = notGot.length ? `<div class="fgroup">
         <div class="fh">卡池中沒抽到的角色<span>${notGot.length} 種・其中沒擁有 ${notGot.filter((id) => !owned.has(id)).length} 種</span></div>
         ${[5, 4, 3, 2].map((r) => {
-          const list = notGot.filter((id) => catRarity(id) === r)
-            .sort((a, b) => (targets.has(b) - targets.has(a)) || (owned.has(a) - owned.has(b)) || a - b);
+          const list = notGot.filter((id) => catRarity(id) === r).sort(byBanner);
           if (!list.length) return '';
           const lacking = list.filter((id) => !owned.has(id)).length;
           return `<details class="nd" ${r >= 4 ? 'open' : ''}>
             <summary><span class="dot r${r}"></span>${RARITY[r]}<span>${list.length} 種・沒擁有 ${lacking}</span></summary>
-            <div class="fchips">${list.map((id) => {
+            ${sections(list, fsub, (ids) => `<div class="fchips">${ids.map((id) => {
               const t = targets.get(id);
               const cls = ['fc', 'ng', `r${r}`, t ? (t.must ? 'fail' : 'miss') : '', owned.has(id) ? 'dup' : ''].join(' ');
               const tag = owned.has(id) ? '<i class="b dp">已擁有</i>' : '<i class="b nw">沒擁有</i>';
               return `<span class="${cls}" title="出現在：${esc(inBanners.get(id).join('、'))}"><span class="dot r${r}"></span>${esc(catName(id))}${tag}</span>`;
-            }).join('')}</div>
+            }).join('')}</div>`)}
           </details>`;
         }).join('')}
       </div>` : '';
