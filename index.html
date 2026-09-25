@@ -114,6 +114,14 @@ header.top p { flex-basis: 100%; margin: 0; color: var(--ink-2); max-width: none
 @media (max-width: 900px) { .layout { grid-template-columns: minmax(0, 1fr); } }
 
 .panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; display: grid; gap: 14px; }
+.runbar { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 3; background: var(--ground); padding-block: 0 4px; margin-block: -4px 0; }
+.runbar button { width: 100%; box-shadow: 0 6px 16px -8px rgba(0, 0, 0, .35); }
+.foldbtn { all: unset; box-sizing: border-box; display: flex; align-items: center; gap: 8px; width: 100%; cursor: pointer; border-radius: 6px; }
+.foldbtn:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.foldbtn::after { content: ""; margin-left: auto; width: 8px; height: 8px; border-right: 2px solid var(--ink-3); border-bottom: 2px solid var(--ink-3); transform: rotate(45deg); transition: transform .15s; flex: none; }
+.panel.fold.collapsed .foldbtn::after { transform: rotate(-45deg); }
+.panel.fold.collapsed > :not(h2) { display: none; }
+.panel.fold.collapsed { padding-block: 12px; }
 .panel h2 { font-size: 16px; display: flex; align-items: center; gap: 8px; }
 .panel h2 .n { font-family: var(--font-mono); font-size: 12px; color: var(--accent-ink); background: var(--accent-soft); border-radius: 6px; padding: 1px 7px; }
 .settings { display: grid; gap: 14px; }
@@ -300,8 +308,9 @@ textarea { font: 13px var(--font-mono); color: var(--ink); background: var(--sur
 
   <div class="layout">
     <form class="settings" id="form" autocomplete="off" novalidate>
-      <section class="panel">
-        <h2><span class="n">1</span>目前狀態</h2>
+      <div class="runbar"><button type="submit" class="primary" id="run">計算最佳路線</button></div>
+      <section class="panel fold" data-sec="state">
+        <h2><button type="button" class="foldbtn" aria-expanded="true"><span class="n">1</span>目前狀態</button></h2>
         <label class="f">貼上 bc.godfat.org 網址（自動帶入）
           <input type="text" id="url" placeholder="https://bc.godfat.org/?seed=...&last=...&event=...">
         </label>
@@ -322,8 +331,8 @@ textarea { font: 13px var(--font-mono); color: var(--ink); background: var(--sur
         </div>
       </section>
 
-      <section class="panel">
-        <h2><span class="n">2</span>可切換的卡池</h2>
+      <section class="panel fold" data-sec="banners">
+        <h2><button type="button" class="foldbtn" aria-expanded="true"><span class="n">2</span>可切換的卡池</button></h2>
         <div class="row">
           <label class="f">從<input type="date" id="dateFrom"></label>
           <label class="f">到<input type="date" id="dateTo"></label>
@@ -338,8 +347,8 @@ textarea { font: 13px var(--font-mono); color: var(--ink); background: var(--sur
         <p class="hint">勾選後可以設定卡池「偏好」，例如 0.1：只有在分數和花費都一樣時才用來決勝，在該池每抽一抽累積一次，越高越優先在那池抽，卡池切換也會變少。不會讓程式多抽。列出區間內任何一天有開的卡池。勾選的卡池都會被當成可以隨時切換，例如用調整時區的方式切到前一天或後一天的卡池。同一個卡池如果不同期的機率或保底不同，會分開列出。</p>
       </section>
 
-      <section class="panel">
-        <h2><span class="n">3</span>抽蛋模式</h2>
+      <section class="panel fold" data-sec="mode">
+        <h2><button type="button" class="foldbtn" aria-expanded="true"><span class="n">3</span>抽蛋模式</button></h2>
         <div class="seg" role="radiogroup" aria-label="抽蛋模式">
           <label><input type="radio" name="mode" id="modeExact" value="exact"><span><b>精準抽目標</b><small>只有設了分數的角色算分，資源能省就省</small></span></label>
           <label><input type="radio" name="mode" id="modeCollect" value="collect"><span><b>收集新角色</b><small>每隻都算分，資源盡量用完</small></span></label>
@@ -383,8 +392,8 @@ textarea { font: 13px var(--font-mono); color: var(--ink); background: var(--sur
         </label>
       </section>
 
-      <section class="panel">
-        <h2><span class="n">4</span>已擁有角色 <span class="count" id="ownedCount"></span></h2>
+      <section class="panel fold" data-sec="owned">
+        <h2><button type="button" class="foldbtn" aria-expanded="true"><span class="n">4</span>已擁有角色 <span class="count" id="ownedCount"></span></button></h2>
         <label class="f">匯入：貼上 bc.godfat.org 網址（含 o= 參數）、o= 的代碼，或角色編號／名稱（用逗號或換行分隔）
           <textarea id="ownedInput" rows="2" placeholder="例如 https://bc.godfat.org/?seed=...&amp;o=3kX9...  或  34, 35, 閃電傑克"></textarea>
         </label>
@@ -397,8 +406,8 @@ textarea { font: 13px var(--font-mono); color: var(--ink); background: var(--sur
         <p class="hint">也可以在下面的角色表逐隻勾選。</p>
       </section>
 
-      <section class="panel">
-        <h2><span class="n">5</span>角色優先度 <span class="count" id="prefCount"></span></h2>
+      <section class="panel fold" data-sec="prefs">
+        <h2><button type="button" class="foldbtn" aria-expanded="true"><span class="n">5</span>角色優先度 <span class="count" id="prefCount"></span></button></h2>
         <div class="tools">
           <input type="search" id="catFilter" placeholder="篩選角色名稱或編號">
           <label class="check"><input type="checkbox" id="onlyCustom"> 只看有設定的</label>
@@ -407,7 +416,6 @@ textarea { font: 13px var(--font-mono); color: var(--ink); background: var(--sur
         <p class="hint">每個稀有度標題旁的「全部擁有／全部取消」只會套用到該組目前列出的角色。「優先度」是第一次抽到的分數，「重複」是之後每多一隻的分數，空白就用灰色的預設值。重複避不開時，會優先重複分數高的角色。勾「必抽」的角色會先滿足，再比較總分。</p>
       </section>
 
-      <button type="submit" class="primary" id="run">計算最佳路線</button>
     </form>
 
     <main class="results" id="results">

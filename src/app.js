@@ -726,6 +726,23 @@
       setTimeout(() => { delete e.target.dataset.armed; e.target.textContent = '全部清除'; }, 3000);
     }
   });
+  // Collapsible settings panels; which ones are folded is remembered.
+  function applyFolds() {
+    const folded = new Set(state.folded || []);
+    document.querySelectorAll('.panel.fold').forEach((sec) => {
+      const f = folded.has(sec.dataset.sec);
+      sec.classList.toggle('collapsed', f);
+      sec.querySelector('.foldbtn').setAttribute('aria-expanded', String(!f));
+    });
+  }
+  document.querySelectorAll('.foldbtn').forEach((btn) => btn.addEventListener('click', () => {
+    const id = btn.closest('.panel').dataset.sec;
+    const folded = new Set(state.folded || []);
+    folded.has(id) ? folded.delete(id) : folded.add(id);
+    state.folded = [...folded];
+    applyFolds(); save();
+  }));
+
   // Header actions. Both replace the current settings, so they ask for a
   // second click first.
   function armed(btn, label, action) {
@@ -742,14 +759,14 @@
     });
   }
   armed($('loadSample'), '載入範例', () => {
-    state = SAMPLE();
+    state = { ...SAMPLE(), folded: state.folded };
     save(); fillForm(); run();
   });
   armed($('resetAll'), '全部重設', () => {
     try { localStorage.removeItem(STORE); } catch (e) { /* storage unavailable */ }
     state = DEFAULTS();
     $('url').value = ''; $('ownedInput').value = ''; $('catFilter').value = '';
-    fillForm(); showGuide();
+    fillForm(); applyFolds(); showGuide();
   });
 
   function showGuide() {
@@ -767,6 +784,7 @@
   }
 
   fillForm();
+  applyFolds();
   if (stored && state.seed && state.selected.length) run();
   else showGuide();
 })();
