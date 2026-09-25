@@ -1,5 +1,8 @@
 // Battle Cats rare gacha simulation, ported from battle-cats-rolls
-// (lib/battle-cats-rolls/gacha.rb).
+// (lib/battle-cats-rolls/gacha.rb and gacha_pool.rb).
+// Copyright (c) 2018-2026, Lin Jen-Shin (godfat). Apache License 2.0.
+// Modified: translated from Ruby to JavaScript and reduced to what the
+// planner needs; see NOTICE.
 //
 // Positions are counted in half rolls: k = 2*(n-1) for nA and 2*(n-1)+1 for
 // nB. A regular roll at k reads rarity from S[k] and slot from S[k+1], then

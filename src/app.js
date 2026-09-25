@@ -52,8 +52,9 @@
   function esc(s) {
     return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   }
-  // bc.godfat.org's owned list: a bitmask of cat ids written in base 62
-  // (lib/battle-cats-rolls/owned.rb).
+  // bc.godfat.org's owned list: a bitmask of cat ids written in base 62.
+  // Translated from battle-cats-rolls lib/battle-cats-rolls/owned.rb,
+  // Copyright (c) 2018-2026, Lin Jen-Shin (godfat), Apache License 2.0.
   const DIGITS = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
   function decodeOwned(code) {
     if (!/^[0-9A-Za-z]+$/.test(code)) return [];
