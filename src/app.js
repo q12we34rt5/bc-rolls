@@ -490,6 +490,18 @@
       }
       last = s.cats[s.cats.length - 1].id;
     }
+    // Where each step leaves you, for resuming from partial progress.
+    {
+      let food = 0, tix = 0;
+      for (const g of groups) {
+        food += g.food; tix += g.tix;
+        Object.assign(g, { lastAfter: g.cats[g.cats.length - 1].id, foodSpent: food, tixSpent: tix });
+      }
+    }
+    // Progress is tied to this exact route; a different route starts over.
+    const sig = [opts.seed, opts.startK, opts.lastId, ...groups.map((g) => `${pools[g.pool].key}:${g.type}:${g.pay}:${g.from}:${g.cats.length}`)].join('|');
+    const done = state.progress && state.progress.sig === sig ? Math.min(state.progress.done, groups.length) : 0;
+    currentRoute = { sig, groups, opts, pools };
 
     const must = opts.targets.filter((t) => t.must);
     const fresh = res.steps.flatMap((s) => s.cats).filter((c) => c.fresh);
@@ -502,7 +514,7 @@
     else verdict = `<div class="verdict ok">${must.length ? '所有必抽角色都拿得到。' : ''}照下面的順序抽，可以拿到 ${res.got.length} / ${stars.length} 個目標。${
       opts.keepFood ? (usedFood ? `只用金券拿不到這個結果，需要用 ${usedFood} 罐頭。` : '只用金券就能完成，不用動到罐頭。') : ''}</div>`;
 
-    const stepsHtml = groups.map((g) => {
+    const stepsHtml = groups.map((g, i) => {
       const pool = pools[g.pool];
       const ev = pool.event;
       const spec = P.multiSpec(pool);
@@ -513,12 +525,13 @@
         : spec.count === 15 ? '階段轉蛋 3+5+7' : spec.guaranteed ? '保底 11 連' : '11 連';
       const cost = [g.tix ? `券 ${g.tix}` : '', g.food ? `罐頭 ${g.food}` : ''].filter(Boolean).join(' + ');
       const hit = g.cats.some((c) => targets.has(c.id));
-      return `<div class="step">
+      return `<div class="step ${i < done ? 'done' : i === done ? 'next' : ''}" data-i="${i}">
         <div class="pos ${kind}">${E.posLabel(g.from)}<small>起</small></div>
         <div class="card ${kind}">
           <div class="hd"><span class="act">${act}</span><span class="bn">${esc(shortName(ev.name))}</span>${hit ? '<span class="hitTag">含目標</span>' : ''}<span class="cost">${cost}</span></div>
           <div class="cats">${g.cats.map((c) => catChip(c, targets, g.from)).join('')}</div>
-          <div class="ft"><span>下一格 ${E.posLabel(g.next)}</span><a href="${seedLink(seeds, opts, g.from, g.lastBefore, pool.key)}" target="_blank" rel="noopener">在 bc.godfat.org 核對 ↗</a></div>
+          <div class="ft"><span>下一格 ${E.posLabel(g.next)}</span><a href="${seedLink(seeds, opts, g.from, g.lastBefore, pool.key)}" target="_blank" rel="noopener">在 bc.godfat.org 核對 ↗</a>
+            <label class="doneBox"><input type="checkbox" data-step="${i}" ${i < done ? 'checked' : ''}> 已抽</label></div>
         </div>
       </div>`;
     }).join('');
@@ -536,6 +549,7 @@
       ${res.steps.length ? finalSummary(res, opts, targets, pools) : ''}
       <div class="legend"><span class="kl k-ticket">金券單抽</span><span class="kl k-food">罐頭單抽</span><span class="kl k-multi">11 連</span><span class="kl k-step">階段轉蛋</span></div>
       <div class="legend"><span class="cat tgt">目標</span><span class="cat">沒有的角色</span><span class="cat dup">已擁有或重複</span><span><sup>保底</sup> 保底超激</span><span><sup>重抽</sup> 稀有重複重抽</span></div>
+      ${groups.length ? `<div class="progress" id="progress"></div>` : ''}
       <div class="timeline">${stepsHtml}</div>
       ${res.steps.length ? `<div class="panel endbox">
         <h2>抽完之後</h2>
@@ -543,7 +557,65 @@
         <a href="${seedLink(seeds, opts, res.end.k, res.end.last, endKey)}" target="_blank" rel="noopener">開啟抽完後的表格 ↗</a></div>
         <p class="hint">計算 ${Math.round(ms)} ms，檢查了 ${res.stats.labels.toLocaleString()} 個狀態。</p>
       </div>` : ''}`;
+    if (groups.length) renderProgress();
   }
+
+  let currentRoute = null;
+
+  function progressDone() {
+    const r = currentRoute;
+    return r && state.progress && state.progress.sig === r.sig ? state.progress.done : 0;
+  }
+
+  function renderProgress() {
+    const r = currentRoute, done = progressDone(), total = r.groups.length;
+    const g = done ? r.groups[done - 1] : null;
+    $('progress').innerHTML = `
+      <div class="pbar"><span style="width:${(done / total) * 100}%"></span></div>
+      <div class="ptext"><b>進度 ${done} / ${total} 步</b>${g ? `<span>目前在 ${E.posLabel(g.next)}，已用罐頭 ${g.foodSpent}、金券 ${g.tixSpent}</span>` : '<span>抽完一步就勾選該步右下角的「已抽」。</span>'}</div>
+      ${done && done < total ? '<button type="button" id="rebase">從目前進度重新規劃</button>' : ''}`;
+    if ($('rebase')) armed($('rebase'), '從目前進度重新規劃', rebase);
+    document.querySelectorAll('#results .step').forEach((el) => {
+      const i = +el.dataset.i;
+      el.classList.toggle('done', i < done);
+      el.classList.toggle('next', i === done);
+      el.querySelector('input[data-step]').checked = i < done;
+    });
+  }
+
+  // Start a new plan from the checked-off position: the seed, last cat and
+  // resources after the last done step. Cats already pulled become owned and
+  // pulled targets lose their priority and must-pull.
+  function rebase() {
+    const r = currentRoute, done = progressDone();
+    if (!r || !done) return;
+    const g = r.groups[done - 1];
+    const pulled = new Set(r.groups.slice(0, done).flatMap((x) => x.cats.map((c) => c.id)).filter((id) => id > 0));
+    state.seed = String(g.next === 0 ? r.opts.seed : r.opts.seeds.at(g.next - 1));
+    state.pos = '1A';
+    state.last = String(g.lastAfter);
+    state.food = Math.max(0, (+state.food || 0) - g.foodSpent);
+    state.tickets = Math.max(0, (+state.tickets || 0) - g.tixSpent);
+    state.owned = [...new Set([...state.owned, ...pulled])].sort((a, b) => a - b);
+    for (const id of pulled) {
+      const pr = state.prefs[id];
+      if (!pr) continue;
+      delete pr.w; delete pr.must;
+      if (!isCustom(pr)) delete state.prefs[id];
+    }
+    state.progress = null;
+    save(); fillForm(); run();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  // Checking a step marks every earlier step too; unchecking clears later ones.
+  $('results').addEventListener('change', (e) => {
+    const i = e.target.dataset.step;
+    if (i === undefined || !currentRoute) return;
+    state.progress = { sig: currentRoute.sig, done: e.target.checked ? +i + 1 : +i };
+    save();
+    renderProgress();
+  });
 
   // Events
   $('form').addEventListener('submit', (e) => { e.preventDefault(); run(); });
