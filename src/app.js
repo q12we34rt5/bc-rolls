@@ -191,6 +191,16 @@
     $('ownedCount').textContent = state.owned.length ? `已登記 ${state.owned.length} 隻` : '';
   }
 
+  let tableGroups = {};
+
+  function setOwned(ids, on) {
+    const owned = new Set(state.owned);
+    for (const id of ids) on ? owned.add(id) : owned.delete(id);
+    state.owned = [...owned].sort((a, b) => a - b);
+    save();
+    renderTable();
+  }
+
   function renderTable() {
     updateCounts();
     const q = $('catFilter').value.trim();
@@ -199,18 +209,30 @@
     const match = (id) => (!q || catName(id).includes(q) || String(id) === q) && (!only || isCustom(prefOf(id)));
     const ids = [...inPools].filter(match);
     const outside = Object.keys(state.prefs).map(Number).filter((id) => !inPools.has(id) && isCustom(prefOf(id)) && match(id));
-    const head = '<div class="chead"><span>角色</span><span>擁有</span><span>優先度</span><span>重複</span><span>必抽</span></div>';
+    // Keep groups the viewer opened or closed as they were.
+    const wasOpen = new Map([...$('ctable').querySelectorAll('details[data-g]')].map((d) => [d.dataset.g, d.open]));
+    tableGroups = {};
+    const head = (g, list) => {
+      tableGroups[g] = list;
+      return '<div class="chead"><span>角色</span><span>擁有</span><span>優先度</span><span>重複</span><span>必抽</span></div>';
+    };
+    // Select-all buttons on each group's title row, for the rows listed there.
+    const ownBtns = (g) => `<span class="gb">
+        <button type="button" data-own="${g}" data-on="1">全部擁有</button>
+        <button type="button" data-own="${g}" data-on="0">全部取消</button></span>`;
     const groups = [5, 4, 3, 2].map((r) => {
       const list = ids.filter((id) => catRarity(id) === r).sort((a, b) => a - b);
       if (!list.length) return '';
       const set = list.filter((id) => isCustom(prefOf(id))).length;
       const own = list.filter((id) => state.owned.includes(id)).length;
-      const open = r >= 4 || set || q || only;
-      return `<details class="r${r}" ${open ? 'open' : ''}><summary><span class="dot"></span>${RARITY[r]}
-        <span class="c">${list.length} 隻・擁有 ${own}${set ? `・設定 ${set}` : ''}</span></summary>${head}${list.map(rowHtml).join('')}</details>`;
+      const open = wasOpen.has(String(r)) ? wasOpen.get(String(r)) : r >= 4 || set || q || only;
+      return `<details class="r${r}" data-g="${r}" ${open ? 'open' : ''}><summary><span class="dot"></span>${RARITY[r]}
+        <span class="c">${list.length} 隻・擁有 ${own}${set ? `・設定 ${set}` : ''}</span>${ownBtns(r)}</summary>${head(r, list)}${list.map(rowHtml).join('')}</details>`;
     }).join('');
-    const other = outside.length ? `<details open><summary>不在勾選卡池 <span class="c">設定會保留，換卡池時生效</span></summary>${head}${outside.map(rowHtml).join('')}</details>` : '';
+    const other = outside.length ? `<details open data-g="x"><summary>不在勾選卡池 <span class="c">設定會保留，換卡池時生效</span>${ownBtns('x')}</summary>${head('x', outside)}${outside.map(rowHtml).join('')}</details>` : '';
+    const scroll = $('ctable').scrollTop;
     $('ctable').innerHTML = groups + other || `<p class="hint">${inPools.size ? '沒有符合的角色。' : '先勾選卡池。'}</p>`;
+    $('ctable').scrollTop = scroll;
   }
 
   function importOwned(text) {
@@ -523,6 +545,12 @@
   }));
   $('stopAtTargets').addEventListener('change', () => { readForm(); renderMode(); renderTable(); });
   $('catFilter').addEventListener('input', renderTable);
+  $('ctable').addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-own]');
+    if (!b) return;
+    e.preventDefault(); // a button inside <summary> would also toggle the group
+    setOwned(tableGroups[b.dataset.own] || [], b.dataset.on === '1');
+  });
   $('onlyCustom').addEventListener('change', renderTable);
   for (const k of ['uberBonus', 'legendBonus', 'rv2', 'rv3', 'rv4', 'rv5', 'dv2', 'dv3', 'dv4', 'dv5']) {
     $(k).addEventListener('change', () => { readForm(); renderTable(); });
@@ -535,6 +563,8 @@
       const owned = new Set(state.owned);
       e.target.checked ? owned.add(id) : owned.delete(id);
       state.owned = [...owned].sort((a, b) => a - b);
+      save();
+      return renderTable(); // refresh the group's 擁有 count
     } else {
       const pr = { ...prefOf(id) };
       if (f === 'must') pr.must = e.target.checked || undefined;

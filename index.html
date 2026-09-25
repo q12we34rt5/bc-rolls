@@ -136,6 +136,8 @@ button.ghost:hover { color: var(--bad); }
 .crow, .chead { display: grid; grid-template-columns: minmax(0, 1fr) 34px 56px 56px 34px; gap: 6px; align-items: center; }
 .chead { font-size: 11px; color: var(--ink-3); padding: 0 6px; text-align: center; }
 .chead span:first-child { text-align: left; }
+.gb { margin-left: auto; display: flex; gap: 4px; }
+.gb button { font-size: 11px; font-weight: 500; padding: 1px 7px; border-radius: 6px; }
 .crow { padding: 3px 6px; border-radius: 7px; }
 .crow:hover { background: var(--surface-2); }
 .crow.custom { background: var(--accent-soft); }
@@ -351,7 +353,7 @@ textarea { font: 13px var(--font-mono); color: var(--ink); background: var(--sur
           <label class="check"><input type="checkbox" id="onlyCustom"> 只看有設定的</label>
         </div>
         <div class="ctable" id="ctable"></div>
-        <p class="hint">「優先度」是第一次抽到的分數，「重複」是之後每多一隻的分數，空白就用灰色的預設值。重複避不開時，會優先重複分數高的角色。勾「必抽」的角色會先滿足，再比較總分。</p>
+        <p class="hint">每個稀有度標題旁的「全部擁有／全部取消」只會套用到該組目前列出的角色。「優先度」是第一次抽到的分數，「重複」是之後每多一隻的分數，空白就用灰色的預設值。重複避不開時，會優先重複分數高的角色。勾「必抽」的角色會先滿足，再比較總分。</p>
       </section>
 
       <button type="submit" class="primary" id="run">計算最佳路線</button>
