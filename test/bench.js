@@ -1,0 +1,17 @@
+const fs = require('fs'), path = require('path'), vm = require('vm');
+const E = require('../src/engine.js'), P = require('../src/planner.js');
+const ctx = { window: {} };
+vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../data/bc-tw.js'), 'utf8'), ctx);
+const data = ctx.window.BC_DATA.tw;
+const day = '2026-09-30';
+const keys = Object.keys(data.events).filter((k) => data.events[k].start <= day && day <= data.events[k].end);
+console.log(keys.map((k) => k + ' ' + data.events[k].name.slice(0, 20) + ' g' + data.events[k].guaranteed));
+const pools = keys.map((k) => E.buildPool(data, k));
+const ubers = pools[keys.indexOf('2026-09-30_947')].slots[E.UBER];
+const food = +(process.argv[2] || 30000), tickets = +(process.argv[3] || 50);
+const targets = ubers.slice(0, 8).map((id, i) => ({ id, weight: 10 - i, must: i === 0 }));
+console.log('targets', targets.map((t) => data.cats[t.id][0]));
+const t0 = Date.now();
+const r = P.plan({ seed: 2020607346, lastId: 47, pools, food, tickets, targets, cats: data.cats, uberBonus: +(process.env.UB||0), legendBonus: +(process.env.LB||0) });
+console.log('ms', Date.now() - t0, r.stats, 'got', r.got.map((t) => data.cats[t.id][0]), 'mustOk', r.mustOk, 'end', r.end);
+for (const s of r.steps) console.log(s.type, keys[s.pool].slice(-4), E.posLabel(s.from), s.cats.map((c) => data.cats[c.id][0] + (c.guaranteed ? '(G)' : '')).join(','));
