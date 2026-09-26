@@ -57,6 +57,12 @@ def series_groups(src, ids, platinum_ids)
   named
 end
 
+# bc.godfat.org highlights these limited cats in its tables; the list lives
+# in lib/battle-cats-rolls/find_cat.rb.
+exclusives = File.read(File.join(repo, 'lib/battle-cats-rolls/find_cat.rb'))[/def self\.exclusives.*?\]/m]
+  .to_s.scan(/^\s*(\d+),/).flatten.map(&:to_i)
+abort 'exclusives list not found in find_cat.rb' if exclusives.empty?
+
 %w[tw jp en kr].each do |lang|
   path = File.join(repo, 'build', "bc-#{lang}.yaml")
   next warn("skip #{path}") unless File.exist?(path)
@@ -104,7 +110,8 @@ end
   cat_out = used.to_h { |id| [id, [cats[id]['name'][0], cats[id]['rarity']]] }
 
   data = { lang: lang, built: Date.today.to_s, cats: cat_out,
-           pools: pools, events: events, platinum: platinum }
+           pools: pools, events: events, platinum: platinum,
+           exclusives: exclusives }
   File.write(File.join(out_dir, "bc-#{lang}.js"),
     "(window.BC_DATA=window.BC_DATA||{})[#{lang.to_json}]=#{JSON.generate(data)};\n")
   puts "#{lang}: #{events.size} events, #{platinum.size} platinum, #{pools.size} pools, #{cat_out.size} cats"

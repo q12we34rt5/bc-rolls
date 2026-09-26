@@ -55,6 +55,32 @@
     return pl && pl.pool && pl.tickets > 0 ? pl : null;
   }
 
+  // Pinned cells: opts.pins = [{pool, k, g, id}] where pool indexes
+  // opts.pools (pools.length for the platinum banner), k is the half
+  // position, g marks a guaranteed cell (an 11-roll starting at k) and id is
+  // the cat that must come out there. Each pin is a must-pull that needs the
+  // cat and the position to match; a dupe reroll into another cat misses it.
+  function pinTable(opts) {
+    const map = new Map();
+    (opts.pins || []).forEach((pin, i) => map.set(`${pin.pool}|${pin.k}|${pin.g ? 1 : 0}`, { i, id: pin.id }));
+    return map;
+  }
+  // Pins hit by cats rolled on pool p starting at half position k0.
+  function pinsHit(map, p, k0, cats) {
+    const hits = [];
+    if (!map.size) return hits;
+    for (const c of cats) {
+      const e = map.get(c.guaranteed ? `${p}|${k0}|1` : `${p}|${c.pos}|0`);
+      if (e && e.id === c.id) hits.push(e.i);
+    }
+    return hits;
+  }
+  function missingPins(opts, steps) {
+    const map = pinTable(opts), hit = new Set();
+    for (const s of steps) pinsHit(map, s.pool, s.from, s.cats).forEach((i) => hit.add(i));
+    return (opts.pins || []).filter((_, i) => !hit.has(i));
+  }
+
   // Optional cap on the number of cats rolled (an 11-roll counts 11, a
   // step-up 15). Without a cap the count isn't tracked, so states merge as
   // before; with one it becomes part of the dominance check.
@@ -71,7 +97,7 @@
   // opts: {seed, startK, lastId, pools, food, tickets, targets:[{id, weight,
   //        dup, must}], copyBonus:{id: value}, uberBonus, legendBonus,
   //        allowMulti, keepFood, maxRolls, bannerBias:[per pool],
-  //        platinum:{pool, tickets}, cats}
+  //        platinum:{pool, tickets}, pins:[{pool, k, g, id}], cats}
   // Cats from platinum rolls only count when they are targets.
   function plan(opts) {
     const seeds = opts.seeds || new E.Seeds(opts.seed);
@@ -94,7 +120,13 @@
       weights.push((t.must ? MUST_WEIGHT : 0) + (+t.weight || 0) - (+t.dup || 0));
       if (t.must) mustMask |= 1 << i;
     });
-    if (opts.targets.length > 30) throw new Error('最多 30 個目標');
+    const pins = pinTable(opts), pinBase = opts.targets.length;
+    (opts.pins || []).forEach((_, i) => {
+      weights.push(MUST_WEIGHT);
+      mustMask |= 1 << (pinBase + i);
+    });
+    if (weights.length > 30) throw new Error('精準模式的目標加上指定格子最多 30 個');
+    const pinMask = (p, k0, cats) => pinsHit(pins, p, k0, cats).reduce((m, i) => m | (1 << (pinBase + i)), 0);
 
     const maskValue = new Map();
     function valueOf(mask) {
@@ -159,12 +191,15 @@
     function transitions(k, last) {
       return pools.map((pool, p) => {
         const r = E.rollAt(seeds, pool, k, last);
+        const cat = { id: r.id, pos: k };
         const single = { next: r.next, last: lastKey(r.id, r.next), ...gainOf([r]) };
+        single.mask |= pinMask(p, k, [cat]);
         const spec = multis[p];
         let multi = null;
         if (allowMulti) {
           const m = E.rollMulti(seeds, pool, k, last, spec.count, spec.guaranteed);
           multi = { next: m.next, last: lastKey(m.last, m.next), cost: spec.cost, ...gainOf(m.cats) };
+          multi.mask |= pinMask(p, k, m.cats);
         }
         return { single, multi };
       }).concat(plat ? [platTransition(k, last)] : []);
@@ -173,7 +208,8 @@
     function platTransition(k, last) {
       const r = E.rollAt(seeds, plat.pool, k, last);
       const b = bit.get(r.id);
-      return { plat: { next: r.next, last: lastKey(r.id, r.next), mask: b === undefined ? 0 : 1 << b } };
+      const mask = (b === undefined ? 0 : 1 << b) | pinMask(pools.length, k, [{ id: r.id, pos: k }]);
+      return { plat: { next: r.next, last: lastKey(r.id, r.next), mask } };
     }
 
     function better(a, b) {
@@ -227,7 +263,7 @@
     const got = opts.targets.filter((_, i) => best.mask & (1 << i));
     const missingMust = opts.targets.filter((tg, i) => tg.must && !(best.mask & (1 << i)));
     return {
-      ...r, got, missingMust,
+      ...r, got, missingMust, missingPins: missingPins(opts, r.steps),
       mustOk: (best.mask & mustMask) === mustMask,
       stats: { labels: labelCount },
     };
@@ -332,6 +368,9 @@
         }
       }
     }
+    // Pins get their own indices after the cats, each worth a must-pull.
+    const pins = pinTable(opts), pinBase = values.length;
+    (opts.pins || []).forEach(() => values.push(MUST_WEIGHT));
     const words = Math.max(1, Math.ceil(values.length / 32));
     // Zobrist hashing so identical sets merge without comparing bitsets.
     let rng = 0x9e3779b9;
@@ -351,17 +390,19 @@
     let labelCount = 0;
 
     const targetIdx = new Set(opts.targets.map((t) => index.get(t.id)).filter((x) => x !== undefined));
+    (opts.pins || []).forEach((_, i) => targetIdx.add(pinBase + i));
+    const pinIdx = (p, k0, cats) => pinsHit(pins, p, k0, cats).map((i) => pinBase + i);
     function transitions(k, last) {
       const idx = (list) => list.map((c) => index.get(c.id)).filter((x) => x !== undefined);
       const flat = (list) => list.reduce((a, c) => a + copyValue(c.id), 0);
       return pools.map((pool, p) => {
         const r = E.rollAt(seeds, pool, k, last);
-        const single = { next: r.next, last: lastKey(r.id, r.next), idx: idx([r]), flat: flat([r]) };
+        const single = { next: r.next, last: lastKey(r.id, r.next), idx: [...idx([r]), ...pinIdx(p, k, [{ id: r.id, pos: k }])], flat: flat([r]) };
         let multi = null;
         if (allowMulti) {
           const spec = multis[p];
           const m = E.rollMulti(seeds, pool, k, last, spec.count, spec.guaranteed);
-          multi = { next: m.next, last: lastKey(m.last, m.next), cost: spec.cost, idx: idx(m.cats), flat: flat(m.cats) };
+          multi = { next: m.next, last: lastKey(m.last, m.next), cost: spec.cost, idx: [...idx(m.cats), ...pinIdx(p, k, m.cats)], flat: flat(m.cats) };
         }
         return { single, multi };
       }).concat(plat ? [platTransition(k, last, idx)] : []);
@@ -370,7 +411,8 @@
     // Platinum rolls only score targets, and cost PLATINUM_COST each.
     function platTransition(k, last, idx) {
       const r = E.rollAt(seeds, plat.pool, k, last);
-      return { plat: { next: r.next, last: lastKey(r.id, r.next), idx: idx([r]).filter((i) => targetIdx.has(i)), flat: -PLATINUM_COST } };
+      const hit = [...idx([r]), ...pinIdx(pools.length, k, [{ id: r.id, pos: k }])].filter((i) => targetIdx.has(i));
+      return { plat: { next: r.next, last: lastKey(r.id, r.next), idx: hit, flat: -PLATINUM_COST } };
     }
 
     const limit = rollLimit(opts), counting = limit < Infinity;
@@ -447,8 +489,9 @@
     const gotIds = new Set(r.steps.flatMap((s) => s.cats.map((c) => c.id)));
     const got = opts.targets.filter((t) => gotIds.has(t.id));
     const missingMust = opts.targets.filter((t) => t.must && !gotIds.has(t.id));
+    const pinsMissed = missingPins(opts, r.steps);
     const platUsed = r.steps.filter((x) => x.type === 'plat').length;
-    return { ...r, got, missingMust, mustOk: !missingMust.length, score: best.score + platUsed * PLATINUM_COST, stats: { labels: labelCount } };
+    return { ...r, got, missingMust, missingPins: pinsMissed, mustOk: !missingMust.length && !pinsMissed.length, score: best.score + platUsed * PLATINUM_COST, stats: { labels: labelCount } };
   }
 
   const api = { plan, planCollect, SINGLE_COST, MULTI_COST, STEP_UP_COST, multiSpec };

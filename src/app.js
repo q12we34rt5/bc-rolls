@@ -18,6 +18,9 @@
     uberBonus: 0.5, legendBonus: 1, allowMulti: true, stopAtTargets: true, keepFood: false, maxRolls: '',
     bannerBias: {}, // event key -> tie-break preference per roll on that banner
     platTickets: '', platKey: '', platMust: [], folded: ['platinum'],
+    // Pinned table cells: {key: event key, k: half position, g: guaranteed
+    // cell, id: the cat shown there when pinned}.
+    pins: [], view: 'route', gridMore: 0, gridCollapsed: [],
     mode: 'exact', rv2: 0.2, rv3: 1, rv4: 5, rv5: 8, dv2: 0, dv3: 0, dv4: 0.5, dv5: 1, beam: 1000, owned: [],
   });
 
@@ -397,12 +400,26 @@
       if (t) { t.must = true; t.star = true; }
       else targets.push({ id, weight: +prefOf(id).w || 10, dup: 0, must: true, star: true });
     }
-    if (!collect && !targets.length) return showError('精準模式至少要替一隻角色設定優先度或必抽。想多抽沒有的角色可以改用收集模式。');
+    // Pinned cells on banners in this run. A pin whose cell now shows a
+    // different cat (the seed or banner data changed) is dropped.
+    const seeds = new E.Seeds(seed);
+    const startK = E.parsePos(state.pos);
+    const shown = platPool ? [...pools, platPool] : pools;
+    const pins = [];
+    let dropped = 0;
+    state.pins = state.pins.filter((pin) => {
+      const p = shown.findIndex((x) => x.key === pin.key);
+      if (p < 0 || pin.k < startK) return true; // inactive for now, keep it
+      if (cellCat(seeds, shown[p], pin.k, pin.g) !== pin.id) { dropped++; return false; }
+      pins.push({ pool: p, k: pin.k, g: !!pin.g, id: pin.id });
+      return true;
+    });
+    if (dropped) save();
+    if (!collect && !targets.length && !pins.length) return showError('精準模式至少要替一隻角色設定優先度或必抽，或在表格裡指定格子。想多抽沒有的角色可以改用收集模式。');
     if (!collect && targets.length > 30) return showError(`精準模式最多 30 隻有優先度的角色，目前 ${targets.length} 隻。可以改用收集模式。`);
 
-    const seeds = new E.Seeds(seed);
     const opts = {
-      seeds, seed, startK: E.parsePos(state.pos), lastId: parseInt(state.last, 10) || 0,
+      seeds, seed, startK, lastId: parseInt(state.last, 10) || 0, pins, droppedPins: dropped,
       pools, food: state.food, tickets: state.tickets,
       targets, copyBonus,
       uberBonus: collect || !state.stopAtTargets ? state.uberBonus : 0,
@@ -420,7 +437,7 @@
       const t0 = performance.now();
       let res;
       try { res = collect ? P.planCollect(opts) : P.plan(opts); } catch (e) { $('results').classList.remove('busy'); $('run').textContent = '計算最佳路線'; return showError(e.message); }
-      renderResult(res, opts, platPool ? [...pools, platPool] : pools, performance.now() - t0, collect);
+      renderResult(res, opts, shown, performance.now() - t0, collect);
       $('results').classList.remove('busy');
       $('run').textContent = '計算最佳路線';
     }, 30);
@@ -531,7 +548,7 @@
     return `<section class="panel final">
       <h2>最終統計</h2>
       ${mustFail.length ? `<div class="verdict bad">必抽失敗 ${mustFail.length} 隻：${mustFail.map((t) => esc(catName(t.id))).join('、')}</div>` : ''}
-      ${mustHtml}${missedHtml}
+      ${mustHtml}${pinsHtml(res, opts)}${missedHtml}
       ${groups}
       ${platTally.size ? `<div class="fgroup plat">
         <div class="fh">白金券抽到<span>${platTally.size} 種・${[...platTally.values()].reduce((a, e) => a + e.count, 0)} 隻</span></div>
@@ -552,29 +569,38 @@
     // Group consecutive singles on the same banner paid the same way.
     const groups = [];
     let last = opts.lastId;
-    for (const s of res.steps) {
+    res.steps.forEach((s, i) => {
       const g = groups[groups.length - 1];
       if (g && s.type !== 'multi' && g.type === s.type && g.pool === s.pool && g.pay === s.pay) {
         g.cats.push(...s.cats); g.next = s.next; g.food += s.pay === 'food' ? s.cost : 0; g.tix += s.pay === 'ticket' ? 1 : 0;
         g.plat += s.pay === 'platinum' ? 1 : 0;
+        g.actEnd = i + 1;
       } else {
         groups.push({ type: s.type, pay: s.pay, pool: s.pool, from: s.from, next: s.next, lastBefore: last, cats: [...s.cats],
-          food: s.pay === 'food' ? s.cost : 0, tix: s.pay === 'ticket' ? 1 : 0, plat: s.pay === 'platinum' ? 1 : 0 });
+          food: s.pay === 'food' ? s.cost : 0, tix: s.pay === 'ticket' ? 1 : 0, plat: s.pay === 'platinum' ? 1 : 0,
+          actStart: i, actEnd: i + 1 });
       }
       last = s.cats[s.cats.length - 1].id;
-    }
-    // Where each step leaves you, for resuming from partial progress.
+    });
+    // Progress is counted in actions (a single roll, or a whole 11-roll /
+    // step-up). Each action records where it leaves you, for resuming, and
+    // the last table row it uses, for "rolled up to this row" (the
+    // guaranteed uber is shown on the start row, so it doesn't count).
+    const acts = [];
     {
-      let food = 0, tix = 0, plat = 0;
-      for (const g of groups) {
-        food += g.food; tix += g.tix; plat += g.plat;
-        Object.assign(g, { lastAfter: g.cats[g.cats.length - 1].id, foodSpent: food, tixSpent: tix, platSpent: plat });
+      let food = 0, tix = 0, plat = 0, rolls = 0;
+      for (const s of res.steps) {
+        if (s.pay === 'food') food += s.cost; else if (s.pay === 'ticket') tix++; else if (s.pay === 'platinum') plat++;
+        rolls += s.cats.length;
+        acts.push({ step: s, next: s.next, lastAfter: s.cats[s.cats.length - 1].id, foodSpent: food, tixSpent: tix,
+          platSpent: plat, rolls, endRow: Math.max(...s.cats.filter((c) => !c.guaranteed).map((c) => Math.floor(c.pos / 2) + 1)) });
       }
     }
     // Progress is tied to this exact route; a different route starts over.
     const sig = [opts.seed, opts.startK, opts.lastId, ...groups.map((g) => `${pools[g.pool].key}:${g.type}:${g.pay}:${g.from}:${g.cats.length}`)].join('|');
-    const done = state.progress && state.progress.sig === sig ? Math.min(state.progress.done, groups.length) : 0;
-    currentRoute = { sig, groups, opts, pools };
+    currentRoute = { sig, groups, acts, opts, pools };
+    const doneActs = progressActs();
+    gridCtx = { res, opts, shown: pools };
 
     const must = opts.targets.filter((t) => t.must);
     const fresh = res.steps.flatMap((s) => s.cats).filter((c) => c.fresh);
@@ -583,7 +609,11 @@
     let verdict;
     if (!res.steps.length) verdict = `<div class="verdict bad">以目前的資源，在勾選的卡池裡拿不到任何${collect ? '有分數的角色' : '目標'}。試試增加卡池或資源。</div>`;
     else if (collect && res.mustOk) verdict = `<div class="verdict ok">照下面的順序抽，可以拿到 ${fresh.length} 隻沒有的角色${freshText ? `（${freshText}）` : ''}${stars.length ? `，目標 ${res.got.length} / ${stars.length}` : ''}。</div>`;
-    else if (!res.mustOk) verdict = `<div class="verdict bad">資源不足以拿到所有必抽角色，缺少：${res.missingMust.map((t) => esc(catName(t.id))).join('、')}。下面是在這個限制下分數最高的路線。</div>`;
+    else if (!res.mustOk) {
+      const miss = [...res.missingMust.map((t) => esc(catName(t.id))),
+        ...(res.missingPins || []).map((p) => `${esc(catName(p.id))}（${pinLabel(pools, p)}）`)];
+      verdict = `<div class="verdict bad">資源不足以拿到所有必抽角色，缺少：${miss.join('、')}。下面是在這個限制下分數最高的路線。</div>`;
+    }
     else verdict = `<div class="verdict ok">${must.length ? '所有必抽角色都拿得到。' : ''}照下面的順序抽，可以拿到 ${res.got.length} / ${stars.length} 個目標。${
       opts.keepFood ? (usedFood ? `只用金券拿不到這個結果，需要用 ${usedFood} 罐頭。` : '只用金券就能完成，不用動到罐頭。') : ''}</div>`;
 
@@ -599,19 +629,32 @@
         : spec.count === 15 ? '階段轉蛋 3+5+7' : spec.guaranteed ? '保底 11 連' : '11 連';
       const cost = [g.plat ? `白金券 ${g.plat}` : '', g.tix ? `券 ${g.tix}` : '', g.food ? `罐頭 ${g.food}` : ''].filter(Boolean).join(' + ');
       const hit = g.cats.some((c) => targets.has(c.id));
-      return `<div class="step ${i < done ? 'done' : i === done ? 'next' : ''}" data-i="${i}">
+      return `<div class="step" data-i="${i}">
         <div class="pos ${kind}">${E.posLabel(g.from)}<small>起</small></div>
         <div class="card ${kind}">
           <div class="hd"><span class="act">${act}</span><span class="bn">${esc(shortName(ev.name))}</span>${hit ? '<span class="hitTag">含目標</span>' : ''}<span class="cost">${cost}</span></div>
           <div class="cats">${g.cats.map((c) => catChip(c, targets, g.from)).join('')}</div>
           <div class="ft"><span>下一格 ${E.posLabel(g.next)}</span><a href="${seedLink(seeds, opts, g.from, g.lastBefore, pool.key)}" target="_blank" rel="noopener">在 bc.godfat.org 核對 ↗</a>
-            <label class="doneBox"><input type="checkbox" data-step="${i}" ${i < done ? 'checked' : ''}> 已抽</label></div>
+            <label class="doneBox"><input type="checkbox" data-step="${i}" ${doneActs >= g.actEnd ? 'checked' : ''}> <span>已抽</span></label></div>
         </div>
       </div>`;
     }).join('');
 
     const endKey = pools[0].key;
+    const view = state.view === 'table' ? 'table' : 'route';
+    // Keep the table and the page where they were (e.g. after pinning a
+    // cell, which recalculates the route).
+    const oldWrap = $('gridwrap');
+    const keep = { left: oldWrap ? oldWrap.scrollLeft : 0, top: oldWrap ? oldWrap.scrollTop : 0, page: window.scrollY };
+    $('results').style.minHeight = `${$('results').offsetHeight}px`;
     $('results').innerHTML = `
+      <div class="tabs" role="tablist">
+        <button type="button" role="tab" data-view="route" aria-selected="${view === 'route'}">路線</button>
+        <button type="button" role="tab" data-view="table" aria-selected="${view === 'table'}">表格${opts.pins.length ? `・指定 ${opts.pins.length}` : ''}</button>
+      </div>
+      ${opts.droppedPins ? `<div class="verdict bad">有 ${opts.droppedPins} 個指定格子的角色和現在的表格不同（種子或卡池資料改變），已經取消。</div>` : ''}
+      <div id="gridView" ${view === 'table' ? '' : 'hidden'}></div>
+      <div id="routeView" ${view === 'route' ? '' : 'hidden'}>
       ${verdict}
       <div class="summary">
         ${collect ? `<div class="stat"><div class="k">新角色</div><div class="v">${fresh.length}<small> 隻</small></div></div>` : ''}
@@ -631,41 +674,340 @@
         <div>新的種子 <code>${res.end.seed}</code>，上一隻 <code>${res.end.last}</code>（${esc(catName(res.end.last))}）。
         <a href="${seedLink(seeds, opts, res.end.k, res.end.last, endKey)}" target="_blank" rel="noopener">開啟抽完後的表格 ↗</a></div>
         <p class="hint">計算 ${Math.round(ms)} ms，檢查了 ${res.stats.labels.toLocaleString()} 個狀態。</p>
-      </div>` : ''}`;
+      </div>` : ''}
+      </div>`;
     if (groups.length) renderProgress();
+    if (view === 'table') {
+      renderGrid();
+      const wrap = $('gridwrap');
+      wrap.scrollLeft = keep.left;
+      wrap.scrollTop = keep.top;
+      markStuckLanes();
+    }
+    $('results').style.minHeight = '';
+    window.scrollTo(window.scrollX, keep.page);
+  }
+
+  // Pinned cells in the final summary: hit or missed.
+  function pinsHtml(res, opts) {
+    if (!opts.pins.length) return '';
+    const missed = new Set((res.missingPins || []).map((p) => `${p.pool}|${p.k}|${p.g}`));
+    return `<div class="fline"><span class="fk">指定格子</span><div class="fchips">${opts.pins.map((p) => {
+      const ok = !missed.has(`${p.pool}|${p.k}|${p.g}`);
+      return `<span class="fc ${ok ? 'ok' : 'fail'}"><span class="dot r${catRarity(p.id)}"></span>${esc(catName(p.id))}<small>${pinLabel(gridCtx ? gridCtx.shown : opts.pools, p)}</small>${ok ? '<i class="b ok">抽到 ✓</i>' : '<i class="b fail">失敗 ✕</i>'}</span>`;
+    }).join('')}</div></div>`;
+  }
+
+  // ---- Table view: the bc.godfat.org style grid with the route drawn on it.
+
+  let gridCtx = null;
+
+  // The cat a cell shows: the raw roll, or for a guaranteed cell the
+  // guaranteed uber of an 11-roll (or step-up) starting there.
+  function cellCat(seeds, pool, k, g) {
+    if (!g) return E.rollAt(seeds, pool, k, 0).id;
+    const spec = P.multiSpec(pool);
+    return E.rollMulti(seeds, pool, k, 0, spec.count, true).cats.pop().id;
+  }
+
+  function pinLabel(pools, p) {
+    const pool = pools[p.pool];
+    return `${pool ? esc(shortName(pool.event.name).slice(0, 10)) : ''} ${E.posLabel(p.k)}${p.g ? ' 保底' : ''}`;
+  }
+
+  // Cell colors follow bc.godfat.org's basic highlighting. The major color
+  // is the score band of the position (fixed thresholds, so a position has
+  // the same color in every banner), unless the cat is owned or an exclusive.
+  // The minor color (a strip on the left) shows the score band for owned
+  // cats and otherwise repeats the major. Guaranteed cells have no score.
+  function scoreBand(score) {
+    if (score === undefined) return 'rare';
+    if (score < 6470) return 'rare';
+    if (score < 6970) return 'supa_fest';
+    if (score < 9070) return 'supa';
+    if (score < 9470) return 'uber_fest';
+    if (score < 9940) return 'uber';
+    if (score < 9970) return 'legend_fest';
+    return 'legend';
+  }
+  function cellColors(id, score, owned, exclusive) {
+    const band = scoreBand(score);
+    if (owned.has(id)) return [exclusive.has(id) ? 'exclusive' : band === 'rare' ? 'owned' : band, 'owned'];
+    if (exclusive.has(id)) return ['exclusive', 'exclusive'];
+    return [band, band];
+  }
+
+  function stepKind(step, pool) {
+    if (step.type === 'plat') return 'k-plat';
+    if (step.type === 'single') return step.pay === 'ticket' ? 'k-ticket' : 'k-food';
+    return P.multiSpec(pool).count === 15 ? 'k-step' : 'k-multi';
+  }
+
+  // Each banner is a column group: [A lane] A (A 保底) B (B 保底) [B lane],
+  // with a gap between banners. Rolls are drawn as downward arrows in the
+  // lane beside their track: A on the left, B on the right. A collapsed
+  // banner keeps only its two lanes.
+  function renderGrid() {
+    if (!gridCtx) return;
+    const { res, opts, shown } = gridCtx;
+    const seeds = opts.seeds, nReg = opts.pools.length;
+    const gCol = (p) => p < nReg && shown[p].guaranteed > 0;
+    const folded = new Set(state.gridCollapsed || []);
+
+    // Cells the route rolls, and the lane arrows for regular rolls.
+    const hits = new Map(), lanes = new Map();
+    let order = 0;
+    for (const [ai, s] of res.steps.entries()) {
+      const kind = stepKind(s, shown[s.pool]);
+      for (const c of s.cats) {
+        order++;
+        const key = c.guaranteed ? `${s.pool}|${s.from}|1` : `${s.pool}|${c.pos}|0`;
+        const h = hits.get(key) || { kind, order: [], id: c.id, act: ai };
+        h.order.push(order);
+        hits.set(key, h);
+        if (!c.guaranteed) lanes.set(`${s.pool}|${c.pos}`, kind);
+      }
+    }
+    const pinned = new Map(state.pins.map((p) => [`${p.key}|${p.k}|${p.g ? 1 : 0}`, p]));
+    const owned = new Set(state.owned), exclusive = new Set(data().exclusives || []);
+
+    const startRow = Math.floor(opts.startK / 2) + 1;
+    const lastHit = Math.max(0, ...[...hits.keys()].map((k) => Math.floor(+k.split('|')[1] / 2) + 1));
+    const endRow = Math.min(startRow + 400, Math.max(lastHit + 3, startRow + 29) + state.gridMore);
+
+    // Lanes that carry arrows stick to the edges when scrolled out of view:
+    // each gets a sticky left offset (stacked after the row numbers, in
+    // column order) and a sticky right offset (stacked from the right edge).
+    const RN_W = 52, LANE_W = 14;
+    const active = [];
+    shown.forEach((_, p) => ['a', 'b'].forEach((side) => {
+      for (const key of lanes.keys()) {
+        const [lp, lk] = key.split('|').map(Number);
+        if (lp === p && (lk % 2 === 0) === (side === 'a') && lk >= opts.startK) { active.push(`${p}|${side}`); return; }
+      }
+    }));
+    const stick = (p, side) => {
+      const i = active.indexOf(`${p}|${side}`);
+      return i < 0 ? '' : ` stick" data-lane="${i}" style="left:${RN_W + i * LANE_W}px;right:${(active.length - 1 - i) * LANE_W}px`;
+    };
+    gridLanes = { active, RN_W, LANE_W };
+    const lane = (p, k, side) => {
+      const kind = k >= opts.startK && lanes.get(`${p}|${k}`);
+      return `<td class="lane ${side}${stick(p, side)}" title="${esc(shortName(shown[p].event.name))} ${side.toUpperCase()} 軌">${kind ? `<i class="la ${kind}"></i>` : ''}</td>`;
+    };
+    const gap = '<td class="gap"></td>';
+
+    const head1 = shown.map((pool, p) => {
+      const name = p >= nReg ? '白金轉蛋' : shortName(pool.event.name);
+      if (folded.has(pool.key)) {
+        return `<th colspan="2" class="bh fold" data-fold="${pool.key}" title="展開：${esc(pool.event.name)}">▸</th>${p < shown.length - 1 ? '<th class="gap"></th>' : ''}`;
+      }
+      const span = (gCol(p) ? 4 : 2) + 2;
+      return `<th colspan="${span}" class="bh" data-fold="${pool.key}" title="收合：${esc(pool.event.name)}"><span>▾ ${esc(name)}</span></th>${p < shown.length - 1 ? '<th class="gap"></th>' : ''}`;
+    }).join('');
+    const head2 = shown.map((pool, p) => {
+      const gapTh = p < shown.length - 1 ? '<th class="gap"></th>' : '';
+      if (folded.has(pool.key)) return `<th class="lane a${stick(p, 'a')}">A</th><th class="lane b${stick(p, 'b')}">B</th>${gapTh}`;
+      const gl = P.multiSpec(pool).count === 15 ? '階段保底' : '保底';
+      return `<th class="lane a${stick(p, 'a')}"></th><th>A</th>${gCol(p) ? `<th class="gc">A ${gl}</th>` : ''}<th>B</th>${gCol(p) ? `<th class="gc">B ${gl}</th>` : ''}<th class="lane b${stick(p, 'b')}"></th>${gapTh}`;
+    }).join('');
+
+    const cell = (p, k, g) => {
+      const pool = shown[p];
+      if (k < opts.startK) return '<td class="past"></td>';
+      let id, extra = '', score;
+      if (g) {
+        const spec = P.multiSpec(pool);
+        const m = E.rollMulti(seeds, pool, k, 0, spec.count, true);
+        id = m.cats[m.cats.length - 1].id;
+        extra = `<small>→ ${E.posLabel(m.next)}</small>`;
+      } else {
+        const r = E.rollAt(seeds, pool, k, 0);
+        id = r.id;
+        score = seeds.at(k) % E.BASE;
+        // A rare that repeats the cell above on the same track can be rerolled.
+        if (r.rarity === E.RARE && k - 2 >= opts.startK && E.rollAt(seeds, pool, k - 2, 0).id === id) {
+          extra = `<small>重→${esc(catName(E.rollAt(seeds, pool, k, id).id))}</small>`;
+        }
+      }
+      const key = `${p}|${k}|${g ? 1 : 0}`;
+      const h = hits.get(key), pin = pinned.get(`${pool.key}|${k}|${g ? 1 : 0}`);
+      const cls = [`r${catRarity(id)}`, g ? 'gc' : '', h ? `hit ${h.kind}` : '', pin ? 'pin' : ''].join(' ');
+      const [major, minor] = cellColors(id, score, owned, exclusive);
+      const style = `--mj:var(--g-${major});--mn:var(--g-${minor})`;
+      const got = h && h.id !== id ? `<small class="rr">實際：${esc(catName(h.id))}</small>` : '';
+      const ord = h ? `<i class="ord">${h.order.join(',')}</i>` : '';
+      return `<td class="${cls}" style="${style}" data-band="${major}" ${h ? `data-act="${h.act}"` : ''} data-cell="${key}" data-key="${pool.key}" data-k="${k}" data-g="${g ? 1 : 0}" data-id="${id}"
+        title="${esc(catName(id))}（${E.posLabel(k)}${g ? ' 保底' : ''}）${pin ? '・已指定' : '・點一下指定必抽'}">${ord}<span class="nm">${esc(catName(id))}</span>${extra}${got}</td>`;
+    };
+
+    // Rows the planned route covers get a tinted row number, colored by how
+    // that row's roll is paid; the last one gets a rule under it.
+    const rowKind = new Map();
+    for (const s of res.steps) {
+      for (const c of s.cats) {
+        const r = Math.floor(c.pos / 2) + 1;
+        if (!c.guaranteed && !rowKind.has(r)) rowKind.set(r, stepKind(s, shown[s.pool]));
+      }
+    }
+    const planEnd = Math.max(0, ...rowKind.keys());
+    let rows = '';
+    for (let n = startRow; n <= endRow; n++) {
+      const kA = (n - 1) * 2, kB = kA + 1;
+      const plan = n <= planEnd ? `plan ${rowKind.get(n) || ''}` : 'after';
+      rows += `<tr class="${n === planEnd ? 'planend' : ''}"><th class="rn ${plan}" data-row="${n}" title="${n <= planEnd ? '規劃範圍內。' : '規劃範圍外。'}點一下：已經抽到這一列">${n}</th>${shown.map((pool, p) => {
+        const tail = p < shown.length - 1 ? gap : '';
+        if (folded.has(pool.key)) return lane(p, kA, 'a') + lane(p, kB, 'b') + tail;
+        return lane(p, kA, 'a') + cell(p, kA, false) + (gCol(p) ? cell(p, kA, true) : '')
+          + cell(p, kB, false) + (gCol(p) ? cell(p, kB, true) : '') + lane(p, kB, 'b') + tail;
+      }).join('')}</tr>`;
+    }
+
+    $('gridView').innerHTML = `
+      <div class="gridnote">
+        <span>點格子＝<b class="pinTag">指定</b>必抽：一定要在那一格抽到那隻角色。保底格代表從那一格開始 11 連拿到的保底超激。再點一次取消，路線會自動重算。點卡池名稱可以收合。點左邊列號＝已經抽到這一列。按住表格拖曳可以捲動。</span>
+        <button type="button" id="clearPins" ${state.pins.length ? '' : 'disabled'}>取消全部指定</button>
+      </div>
+      <div class="legend"><span class="kl k-ticket">金券單抽</span><span class="kl k-food">罐頭單抽</span><span class="kl k-multi">11 連</span><span class="kl k-step">階段轉蛋</span>${opts.platinum ? '<span class="kl k-plat">白金券</span>' : ''}<span>A 軌的箭頭在左側，B 軌在右側；格子左上角數字是第幾抽</span><span>列號有底色＝這次規劃的範圍，顏色是那一列的抽法；抽過的列會變暗並打 ✓</span></div>
+      <div class="legend bands">${[['rare', '稀有'], ['supa_fest', '激稀有（祭）'], ['supa', '激稀有'], ['uber_fest', '超激（祭）'], ['uber', '超激'],
+        ['legend_fest', '傳說（祭）'], ['legend', '傳說'], ['owned', '已擁有'], ['exclusive', '限定']]
+        .map(([b, t]) => `<span class="band" style="--mj:var(--g-${b})">${t}</span>`).join('')}<span>底色依 bc.godfat.org：看那一格的分數區間，每個卡池同一格顏色相同</span></div>
+      <div class="gridwrap" id="gridwrap">
+        <style id="laneStyle"></style>
+        <table class="grid"><thead><tr><th class="rn" rowspan="2">No.</th>${head1}</tr><tr>${head2}</tr></thead><tbody>${rows}</tbody></table>
+      </div>
+      <button type="button" id="gridMore">再顯示 50 列</button>`;
+    applyGridProgress();
+    $('gridwrap').addEventListener('scroll', markStuckLanes, { passive: true });
+    markStuckLanes();
+  }
+
+  // Which sticky lanes are currently stacked at an edge (away from their own
+  // banner). Stacked lanes get a darker ground, and the inner edge of each
+  // stack gets a thick rule so the stack reads apart from the table.
+  let gridLanes = { active: [] };
+  function markStuckLanes() {
+    const wrap = $('gridwrap'), style = $('laneStyle');
+    if (!wrap || !style) return;
+    const { active, RN_W, LANE_W } = gridLanes;
+    const heads = [...wrap.querySelectorAll('thead th.bh')];
+    const view = wrap.clientWidth, x0 = wrap.scrollLeft;
+    const left = [], right = [];
+    active.forEach((id, i) => {
+      const [p, side] = id.split('|');
+      const bh = heads[+p];
+      if (!bh) return;
+      // Natural position of the lane: first or last column of its banner.
+      const x = (side === 'a' ? bh.offsetLeft : bh.offsetLeft + bh.offsetWidth - LANE_W) - x0;
+      if (x < RN_W + i * LANE_W - 0.5) left.push(i);
+      else if (x > view - (active.length - i) * LANE_W + 0.5) right.push(i);
+    });
+    const sel = (i) => `#gridwrap [data-lane="${i}"]`;
+    let css = [...left, ...right].map((i) => `${sel(i)}{background:var(--surface-2)!important}`).join('');
+    // Keep the 1px divider on every lane; the stack's inner edge gets a
+    // rule three times as thick in --stack-edge.
+    if (left.length) css += `${sel(Math.max(...left))}{box-shadow:inset 1px 0 0 var(--line),inset -3px 0 0 var(--stack-edge)!important}`;
+    if (right.length) css += `${sel(Math.min(...right))}{box-shadow:inset 3px 0 0 var(--stack-edge)!important}`;
+    style.textContent = css;
+  }
+  window.addEventListener('resize', () => requestAnimationFrame(markStuckLanes));
+
+  // Drag the table to scroll it. A press that moves less than a few pixels
+  // is still a click (pinning a cell).
+  {
+    let drag = null;
+    document.addEventListener('pointerdown', (e) => {
+      const wrap = e.target.closest && e.target.closest('#gridwrap');
+      if (!wrap || e.button !== 0 || e.pointerType === 'touch') return;
+      drag = { wrap, x: e.clientX, y: e.clientY, left: wrap.scrollLeft, top: wrap.scrollTop, moved: false };
+    });
+    document.addEventListener('pointermove', (e) => {
+      if (!drag) return;
+      const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+      if (!drag.moved && Math.hypot(dx, dy) < 5) return;
+      drag.moved = true;
+      drag.wrap.classList.add('dragging');
+      drag.wrap.scrollLeft = drag.left - dx;
+      drag.wrap.scrollTop = drag.top - dy;
+    });
+    document.addEventListener('pointerup', () => {
+      if (!drag) return;
+      const moved = drag.moved;
+      drag.wrap.classList.remove('dragging');
+      drag = null;
+      if (moved) {
+        // Swallow the click that ends a drag.
+        const stop = (ev) => { ev.stopPropagation(); ev.preventDefault(); };
+        document.addEventListener('click', stop, { capture: true, once: true });
+        setTimeout(() => document.removeEventListener('click', stop, { capture: true }), 0);
+      }
+    });
   }
 
   let currentRoute = null;
 
-  function progressDone() {
+  // Number of actions done on the current route.
+  function progressActs() {
     const r = currentRoute;
-    return r && state.progress && state.progress.sig === r.sig ? state.progress.done : 0;
+    if (!r || !state.progress || state.progress.sig !== r.sig) return 0;
+    return Math.min(+state.progress.acts || 0, r.acts.length);
+  }
+  function setProgress(n) {
+    state.progress = { sig: currentRoute.sig, acts: n };
+    save();
+    renderProgress();
   }
 
   function renderProgress() {
-    const r = currentRoute, done = progressDone(), total = r.groups.length;
-    const g = done ? r.groups[done - 1] : null;
-    $('progress').innerHTML = `
-      <div class="pbar"><span style="width:${(done / total) * 100}%"></span></div>
-      <div class="ptext"><b>進度 ${done} / ${total} 步</b>${g ? `<span>目前在 ${E.posLabel(g.next)}，已用罐頭 ${g.foodSpent}、金券 ${g.tixSpent}${g.platSpent ? `、白金券 ${g.platSpent}` : ''}</span>` : '<span>抽完一步就勾選該步右下角的「已抽」。</span>'}</div>
-      ${done && done < total ? '<button type="button" id="rebase">從目前進度重新規劃</button>' : ''}`;
-    if ($('rebase')) armed($('rebase'), '從目前進度重新規劃', rebase);
+    const r = currentRoute, n = progressActs(), acts = r.acts;
+    const a = n ? acts[n - 1] : null, total = acts[acts.length - 1].rolls;
+    const pbar = $('progress');
+    if (pbar) {
+      pbar.innerHTML = `
+        <div class="pbar"><span style="width:${((a ? a.rolls : 0) / total) * 100}%"></span></div>
+        <div class="ptext"><b>進度 ${a ? a.rolls : 0} / ${total} 抽</b>${a ? `<span>目前在 ${E.posLabel(a.next)}，已用罐頭 ${a.foodSpent}、金券 ${a.tixSpent}${a.platSpent ? `、白金券 ${a.platSpent}` : ''}</span>` : '<span>抽完就勾選該步右下角的「已抽」，或在表格點列號。</span>'}</div>
+        ${n && n < acts.length ? '<button type="button" id="rebase">從目前進度重新規劃</button>' : ''}`;
+      if ($('rebase')) armed($('rebase'), '從目前進度重新規劃', rebase);
+    }
+    let nextMarked = false;
     document.querySelectorAll('#results .step').forEach((el) => {
-      const i = +el.dataset.i;
-      el.classList.toggle('done', i < done);
-      el.classList.toggle('next', i === done);
-      el.querySelector('input[data-step]').checked = i < done;
+      const g = r.groups[+el.dataset.i];
+      const done = n >= g.actEnd, part = n > g.actStart && n < g.actEnd;
+      el.classList.toggle('done', done);
+      el.classList.toggle('next', !done && !nextMarked);
+      if (!done) nextMarked = true;
+      const box = el.querySelector('input[data-step]');
+      box.checked = done;
+      box.indeterminate = part;
+      box.nextElementSibling.textContent = part ? `已抽 ${n - g.actStart} / ${g.actEnd - g.actStart}` : '已抽';
     });
+    applyGridProgress();
+  }
+
+  // Table view: rows up to the progress are ticked, rolled cells fade and the
+  // row of the next roll is marked.
+  function applyGridProgress() {
+    const wrap = $('gridwrap');
+    if (!wrap || !currentRoute) return;
+    const n = progressActs(), acts = currentRoute.acts;
+    const doneRow = n ? acts[n - 1].endRow : 0;
+    const nextRow = n < acts.length ? Math.floor(acts[n].step.from / 2) + 1 : -1;
+    wrap.querySelectorAll('th.rn[data-row]').forEach((th) => {
+      const row = +th.dataset.row;
+      th.classList.toggle('done', row <= doneRow);
+      th.classList.toggle('next', row === nextRow);
+    });
+    wrap.querySelectorAll('td[data-act]').forEach((td) => td.classList.toggle('done', +td.dataset.act < n));
   }
 
   // Start a new plan from the checked-off position: the seed, last cat and
   // resources after the last done step. Cats already pulled become owned and
   // pulled targets lose their priority and must-pull.
   function rebase() {
-    const r = currentRoute, done = progressDone();
-    if (!r || !done) return;
-    const g = r.groups[done - 1];
-    const pulled = new Set(r.groups.slice(0, done).flatMap((x) => x.cats.map((c) => c.id)).filter((id) => id > 0));
+    const r = currentRoute, n = progressActs();
+    if (!r || !n) return;
+    const g = r.acts[n - 1];
+    const pulled = new Set(r.acts.slice(0, n).flatMap((x) => x.step.cats.map((c) => c.id)).filter((id) => id > 0));
     state.seed = String(g.next === 0 ? r.opts.seed : r.opts.seeds.at(g.next - 1));
     state.pos = '1A';
     state.last = String(g.lastAfter);
@@ -673,9 +1015,10 @@
     state.tickets = Math.max(0, (+state.tickets || 0) - g.tixSpent);
     if (g.platSpent) state.platTickets = Math.max(0, (+state.platTickets || 0) - g.platSpent) || '';
     state.platMust = state.platMust.filter((id) => !pulled.has(id));
+    // Pins move with the new starting point; ones already passed are dropped.
+    state.pins = state.pins.filter((pin) => pin.k >= g.next).map((pin) => ({ ...pin, k: pin.k - g.next }));
     if (+state.maxRolls) {
-      const rolled = r.groups.slice(0, done).reduce((a, x) => a + x.cats.length, 0);
-      state.maxRolls = Math.max(1, state.maxRolls - rolled);
+      state.maxRolls = Math.max(1, state.maxRolls - g.rolls);
     }
     state.owned = [...new Set([...state.owned, ...pulled])].sort((a, b) => a - b);
     for (const id of pulled) {
@@ -689,13 +1032,56 @@
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
+  // Tabs, and pinning table cells.
+  $('results').addEventListener('click', (e) => {
+    const tab = e.target.closest('[data-view]');
+    if (tab) {
+      state.view = tab.dataset.view;
+      save();
+      $('results').querySelectorAll('[data-view]').forEach((b) => b.setAttribute('aria-selected', String(b === tab)));
+      $('routeView').hidden = state.view !== 'route';
+      $('gridView').hidden = state.view !== 'table';
+      if (state.view === 'table') renderGrid();
+      return;
+    }
+    if (e.target.id === 'gridMore') { state.gridMore += 50; save(); renderGrid(); return; }
+    const fold = e.target.closest('[data-fold]');
+    if (fold) {
+      const set = new Set(state.gridCollapsed || []);
+      set.has(fold.dataset.fold) ? set.delete(fold.dataset.fold) : set.add(fold.dataset.fold);
+      state.gridCollapsed = [...set];
+      save();
+      const wrap = $('gridwrap'), left = wrap.scrollLeft, top = wrap.scrollTop;
+      renderGrid();
+      $('gridwrap').scrollLeft = left; $('gridwrap').scrollTop = top;
+      return;
+    }
+    if (e.target.id === 'clearPins') { state.pins = []; save(); run(); return; }
+    const rowTh = e.target.closest('th.rn[data-row]');
+    if (rowTh && currentRoute) {
+      // Rolled up to this row: every action that ends by here is done.
+      const row = +rowTh.dataset.row, acts = currentRoute.acts;
+      const upTo = (r) => { let n = 0; while (n < acts.length && acts[n].endRow <= r) n++; return n; };
+      let n = upTo(row);
+      if (n === progressActs() && n > 0) n = upTo(row - 1);
+      setProgress(n);
+      return;
+    }
+    const td = e.target.closest('td[data-cell]');
+    if (!td) return;
+    const pin = { key: td.dataset.key, k: +td.dataset.k, g: td.dataset.g === '1', id: +td.dataset.id };
+    const i = state.pins.findIndex((p) => p.key === pin.key && p.k === pin.k && !!p.g === pin.g);
+    if (i >= 0) state.pins.splice(i, 1); else state.pins.push(pin);
+    save();
+    run();
+  });
+
   // Checking a step marks every earlier step too; unchecking clears later ones.
   $('results').addEventListener('change', (e) => {
     const i = e.target.dataset.step;
     if (i === undefined || !currentRoute) return;
-    state.progress = { sig: currentRoute.sig, done: e.target.checked ? +i + 1 : +i };
-    save();
-    renderProgress();
+    const g = currentRoute.groups[+i];
+    setProgress(e.target.checked ? g.actEnd : g.actStart);
   });
 
   // Events

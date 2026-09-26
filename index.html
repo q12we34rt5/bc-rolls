@@ -13,6 +13,7 @@
   --ink-2: #4b5567;
   --ink-3: #7a8497;
   --line: #d9dfe8;
+  --stack-edge: #b9c2cf;
   --accent: #c98a00;
   --accent-ink: #7a5300;
   --accent-soft: #fbefd0;
@@ -27,6 +28,17 @@
   --k-multi: #d0343f;
   --k-step: #1f8a4c;
   --k-plat: #5b7083;
+  /* bc.godfat.org's default highlight palette */
+  --g-rare: #ffffff;
+  --g-supa_fest: #ffff00;
+  --g-supa: #ffd700;
+  --g-uber_fest: #fa8072;
+  --g-uber: #ff0000;
+  --g-legend_fest: #7b68ee;
+  --g-legend: #9400d3;
+  --g-owned: #e0ffff;
+  --g-exclusive: #00ffff;
+  --g-ink: #111111;
   --bad: #c0392b;
   --bad-soft: #fbe3e0;
   --font-body: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif;
@@ -44,6 +56,7 @@
     --ink-2: #b3bccb;
     --ink-3: #7f899b;
     --line: #2d3545;
+    --stack-edge: #4d586c;
     --accent: #f0b429;
     --accent-ink: #f6cf6e;
     --accent-soft: #3a2e10;
@@ -76,6 +89,7 @@
   --ink-2: #b3bccb;
   --ink-3: #7f899b;
   --line: #2d3545;
+  --stack-edge: #4d586c;
   --accent: #f0b429;
   --accent-ink: #f6cf6e;
   --accent-soft: #3a2e10;
@@ -220,6 +234,7 @@ button.ghost:hover { color: var(--bad); }
 .fc.ng { background: none; border: 1px solid var(--line); font-weight: 500; }
 .fc.ng.miss { border: 1px dashed var(--accent); }
 .fc.ng.fail { border-color: var(--bad); color: var(--bad); font-weight: 700; }
+.fc small { font-size: 11px; color: var(--ink-3); font-weight: 400; }
 .fc .x { font-family: var(--font-mono); font-size: 12px; color: var(--ink-2); }
 .fc .b { font-style: normal; font-size: 10px; font-weight: 700; line-height: 16px; padding: 0 5px; border-radius: 4px; white-space: nowrap; }
 .b.ok { background: var(--good); color: var(--surface); }
@@ -304,6 +319,69 @@ textarea { font: 13px var(--font-mono); color: var(--ink); background: var(--sur
 .count { font-family: var(--font-body); font-size: 12px; font-weight: 500; color: var(--ink-3); }
 .cat.dup { opacity: .45; }
 .legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12px; color: var(--ink-3); align-items: center; }
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); }
+.tabs button { border: none; border-bottom: 3px solid transparent; border-radius: 0; background: none; padding: 8px 14px; font-size: 14px; color: var(--ink-3); }
+.tabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); }
+#routeView, #gridView { display: grid; gap: 16px; }
+.gridnote { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; font-size: 13px; color: var(--ink-2); }
+.pinTag { color: var(--bad); }
+button:disabled { opacity: .45; cursor: default; }
+button:disabled:hover { border-color: var(--line); }
+.gridwrap { position: relative; overflow: auto; max-height: 78vh; border: 1px solid var(--line); border-radius: var(--radius); background: var(--ground); cursor: grab; user-select: none; }
+.gridwrap.dragging { cursor: grabbing; }
+.gridwrap.dragging td { pointer-events: none; }
+.grid { border-collapse: separate; border-spacing: 0; font-size: 12px; }
+.grid th { position: sticky; top: 0; z-index: 6; background: var(--surface-2); color: var(--ink-2); font-weight: 700; padding: 4px 6px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.grid thead tr:nth-child(2) th { top: 25px; }
+.grid th.bh { max-width: 280px; overflow: hidden; text-overflow: ellipsis; cursor: pointer; text-align: left; }
+.grid th.bh:hover { color: var(--accent-ink); }
+.grid th.bh.fold { text-align: center; padding: 4px 0; }
+.grid th.rn { left: 0; z-index: 8; font-family: var(--font-mono); box-sizing: border-box; width: 52px; min-width: 52px; max-width: 52px; }
+.grid tbody th.rn { position: sticky; left: 0; z-index: 3; background: var(--surface-2); top: auto; cursor: pointer; }
+.grid tbody th.rn:hover { text-decoration: underline; }
+.grid tbody th.rn.plan { background: var(--surface); color: var(--ink); }
+.grid tbody th.rn.plan[class*="k-"] { background: color-mix(in srgb, var(--k) 35%, var(--surface)); box-shadow: inset 3px 0 0 var(--k); }
+.grid tbody th.rn.after { color: var(--ink-3); font-weight: 400; }
+.grid tbody tr.planend > * { border-bottom: 2px solid var(--accent); }
+
+.grid tbody th.rn.done { filter: brightness(.55) saturate(.7); }
+.grid tbody th.rn.done::after { content: " ✓"; font-weight: 700; }
+.grid tbody th.rn.next { outline: 2px solid var(--ink); outline-offset: -2px; }
+.grid tbody th.rn.next::before { content: "▶ "; font-size: 9px; }
+.grid td.done { opacity: .45; }
+.grid th.gap, .grid td.gap { min-width: 14px; width: 14px; padding: 0; background: var(--ground); border: none; }
+.grid td { position: relative; padding: 5px 6px 4px; min-width: 92px; max-width: 124px; border-bottom: 1px solid var(--line); border-left: 1px solid var(--line); background: var(--surface); cursor: pointer; vertical-align: top; line-height: 1.3; }
+/* Cells painted like bc.godfat.org: a 10% minor strip, then the major. */
+.grid td[data-band] { background: linear-gradient(to right, var(--mn) 10%, var(--mj) 10%); color: var(--g-ink); }
+.grid td[data-band] small { color: color-mix(in srgb, var(--g-ink) 65%, transparent); }
+.grid td[data-band="legend"], .grid td[data-band="legend_fest"] { color: #d8a56f; }
+.grid td[data-band="legend"] small, .grid td[data-band="legend_fest"] small { color: #f1d9b8; }
+.legend.bands .band { padding: 1px 8px; border-radius: 4px; background: var(--mj); color: var(--g-ink); border: 1px solid var(--line); }
+.grid td .nm { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.grid td small { display: block; font-size: 10px; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.grid td small.rr { color: var(--ink-2); font-weight: 700; }
+.grid td.past { background: var(--surface-2); cursor: default; }
+.grid td.r4 .nm, .grid td.r5 .nm { font-weight: 700; }
+.grid td[data-band]:hover { filter: brightness(.9); }
+.grid td.hit { box-shadow: inset 0 0 0 3px var(--k); }
+.grid td.hit .ord { color: var(--g-ink); font-weight: 700; }
+.grid td.pin { outline: 2px dashed var(--bad); outline-offset: -5px; }
+.grid td.pin::after { content: "指定"; position: absolute; right: 3px; top: 2px; font-size: 9px; font-weight: 700; color: var(--bad); }
+.grid .ord { position: absolute; left: 4px; top: 2px; font: 9px var(--font-mono); font-style: normal; }
+.grid td.hit .nm { padding-left: 10px; }
+/* Arrow lanes: a vertical line through the row with a head at the bottom,
+   so consecutive rolls on one track read as a continuous arrow. */
+.grid th.lane, .grid td.lane { box-sizing: border-box; min-width: 14px; width: 14px; max-width: 14px; padding: 0; cursor: default; border-left: none; background: var(--surface); }
+.grid th.lane { font-size: 10px; color: var(--ink-3); text-align: center; background: var(--surface-2); }
+/* Lanes with arrows stay on screen: they stack at the left or right edge
+   when their banner is scrolled out of view (offsets set inline). */
+.grid td.lane.b, .grid th.lane.b, .grid td.lane.stick, .grid th.lane.stick { box-shadow: inset 1px 0 0 var(--line); }
+.grid td.lane.stick { position: sticky; z-index: 2; }
+.grid th.lane.stick { position: sticky; z-index: 7; }
+.la { position: absolute; inset: 0; }
+.la::before { content: ""; position: absolute; left: 50%; top: 0; bottom: 5px; width: 3px; margin-left: -1.5px; background: var(--k); border-radius: 2px; }
+.la::after { content: ""; position: absolute; left: 50%; bottom: 0; margin-left: -5px; border: 5px solid transparent; border-top: 6px solid var(--k); border-bottom: 0; }
+#gridMore { justify-self: start; }
 .busy { opacity: .55; pointer-events: none; }
 @media (prefers-reduced-motion: no-preference) { .card { transition: border-color .2s; } }
 </style>
