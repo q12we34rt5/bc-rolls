@@ -444,7 +444,9 @@
   }
 
   function showError(msg) {
+    $('results').classList.remove('tableMode');
     $('results').innerHTML = `<div class="verdict bad">${esc(msg)}</div>`;
+    $('summaryBody').innerHTML = '<p class="hint">按「計算最佳路線」後會顯示這條路線的統計。</p>';
   }
 
   function seedLink(seeds, opts, k, last, eventKey) {
@@ -545,8 +547,7 @@
         }).join('')}
       </div>` : '';
 
-    return `<section class="panel final">
-      <h2>最終統計</h2>
+    return `
       ${mustFail.length ? `<div class="verdict bad">必抽失敗 ${mustFail.length} 隻：${mustFail.map((t) => esc(catName(t.id))).join('、')}</div>` : ''}
       ${mustHtml}${pinsHtml(res, opts)}${missedHtml}
       ${groups}
@@ -555,7 +556,7 @@
         <div class="fchips">${[...platTally.values()].sort((a, b) => b.rarity - a.rarity || b.id - a.id).map(chip).join('')}</div>
       </div>` : ''}
       ${notGotHtml}
-    </section>`;
+    `;
   }
 
   function renderResult(res, opts, pools, ms, collect) {
@@ -645,7 +646,8 @@
     // Keep the table and the page where they were (e.g. after pinning a
     // cell, which recalculates the route).
     const oldWrap = $('gridwrap');
-    const keep = { left: oldWrap ? oldWrap.scrollLeft : 0, top: oldWrap ? oldWrap.scrollTop : 0, page: window.scrollY };
+    const keep = { left: oldWrap ? oldWrap.scrollLeft : 0, top: oldWrap ? oldWrap.scrollTop : 0, page: window.scrollY,
+      results: $('results').scrollTop };
     $('results').style.minHeight = `${$('results').offsetHeight}px`;
     $('results').innerHTML = `
       <div class="tabs" role="tablist">
@@ -656,15 +658,6 @@
       <div id="gridView" ${view === 'table' ? '' : 'hidden'}></div>
       <div id="routeView" ${view === 'route' ? '' : 'hidden'}>
       ${verdict}
-      <div class="summary">
-        ${collect ? `<div class="stat"><div class="k">新角色</div><div class="v">${fresh.length}<small> 隻</small></div></div>` : ''}
-        ${stars.length ? `<div class="stat"><div class="k">目標</div><div class="v">${res.got.length}<small> / ${stars.length}</small></div></div>` : ''}
-        <div class="stat"><div class="k">罐頭</div><div class="v">${usedFood}<small> 用掉，剩 ${res.end.food}</small></div></div>
-        <div class="stat"><div class="k">稀有轉蛋券</div><div class="v">${usedTix}<small> 用掉，剩 ${res.end.tickets}</small></div></div>
-        ${opts.platinum ? `<div class="stat"><div class="k">白金券</div><div class="v">${opts.platinum.tickets - res.end.platinum}<small> 用掉，剩 ${res.end.platinum}</small></div></div>` : ''}
-        <div class="stat"><div class="k">總抽數</div><div class="v">${rolls}<small> ${opts.maxRolls ? `/ 上限 ${opts.maxRolls} 抽` : '抽'}</small></div></div>
-      </div>
-      ${res.steps.length ? finalSummary(res, opts, targets, opts.pools) : ''}
       <div class="legend"><span class="kl k-ticket">金券單抽</span><span class="kl k-food">罐頭單抽</span><span class="kl k-multi">11 連</span><span class="kl k-step">階段轉蛋</span>${opts.platinum ? '<span class="kl k-plat">白金券</span>' : ''}</div>
       <div class="legend"><span class="cat tgt">目標</span><span class="cat">沒有的角色</span><span class="cat dup">已擁有或重複</span><span><sup>保底</sup> 保底超激</span><span><sup>重抽</sup> 稀有重複重抽</span></div>
       ${groups.length ? `<div class="progress" id="progress"></div>` : ''}
@@ -676,6 +669,18 @@
         <p class="hint">計算 ${Math.round(ms)} ms，檢查了 ${res.stats.labels.toLocaleString()} 個狀態。</p>
       </div>` : ''}
       </div>`;
+    // Totals and the final summary live in the settings column (panel 7).
+    $('summaryBody').innerHTML = `
+      <div class="summary">
+        ${collect ? `<div class="stat"><div class="k">新角色</div><div class="v">${fresh.length}<small> 隻</small></div></div>` : ''}
+        ${stars.length ? `<div class="stat"><div class="k">目標</div><div class="v">${res.got.length}<small> / ${stars.length}</small></div></div>` : ''}
+        <div class="stat"><div class="k">罐頭</div><div class="v">${usedFood}<small class="sub">用掉，剩 ${res.end.food}</small></div></div>
+        <div class="stat"><div class="k">稀有轉蛋券</div><div class="v">${usedTix}<small class="sub">用掉，剩 ${res.end.tickets}</small></div></div>
+        ${opts.platinum ? `<div class="stat"><div class="k">白金券</div><div class="v">${opts.platinum.tickets - res.end.platinum}<small class="sub">用掉，剩 ${res.end.platinum}</small></div></div>` : ''}
+        <div class="stat"><div class="k">總抽數</div><div class="v">${rolls}<small> ${opts.maxRolls ? `/ 上限 ${opts.maxRolls} 抽` : '抽'}</small></div></div>
+      </div>
+      ${res.steps.length ? finalSummary(res, opts, targets, opts.pools) : ''}
+    `;
     if (groups.length) renderProgress();
     if (view === 'table') {
       renderGrid();
@@ -685,6 +690,8 @@
       markStuckLanes();
     }
     $('results').style.minHeight = '';
+    $('results').classList.toggle('tableMode', view === 'table');
+    $('results').scrollTop = keep.results;
     window.scrollTo(window.scrollX, keep.page);
   }
 
@@ -865,13 +872,20 @@
 
     $('gridView').innerHTML = `
       <div class="gridnote">
-        <span>點格子＝<b class="pinTag">指定</b>必抽：一定要在那一格抽到那隻角色。保底格代表從那一格開始 11 連拿到的保底超激。再點一次取消，路線會自動重算。點卡池名稱可以收合。點左邊列號＝已經抽到這一列。按住表格拖曳可以捲動。</span>
         <button type="button" id="clearPins" ${state.pins.length ? '' : 'disabled'}>取消全部指定</button>
+        <details class="gridhelp"${state.gridHelp ? ' open' : ''}><summary>表格說明</summary>
+          <ul>
+            <li>點格子＝<b class="pinTag">指定</b>必抽：一定要在那一格抽到那隻角色。保底格代表從那一格開始 11 連拿到的保底超激。再點一次取消，路線會自動重算。</li>
+            <li>點左邊列號＝已經抽到這一列。列號有底色＝這次規劃的範圍，顏色是那一列的抽法；抽過的列會變暗並打 ✓。</li>
+            <li>A 軌的箭頭在卡池左側，B 軌在右側；捲出畫面的箭頭會疊在左右邊緣。格子左上角數字是第幾抽。</li>
+            <li>點卡池名稱可以收合。按住表格拖曳可以捲動。底色依 bc.godfat.org：看那一格的分數區間，每個卡池同一格顏色相同。</li>
+          </ul>
+        </details>
       </div>
-      <div class="legend"><span class="kl k-ticket">金券單抽</span><span class="kl k-food">罐頭單抽</span><span class="kl k-multi">11 連</span><span class="kl k-step">階段轉蛋</span>${opts.platinum ? '<span class="kl k-plat">白金券</span>' : ''}<span>A 軌的箭頭在左側，B 軌在右側；格子左上角數字是第幾抽</span><span>列號有底色＝這次規劃的範圍，顏色是那一列的抽法；抽過的列會變暗並打 ✓</span></div>
-      <div class="legend bands">${[['rare', '稀有'], ['supa_fest', '激稀有（祭）'], ['supa', '激稀有'], ['uber_fest', '超激（祭）'], ['uber', '超激'],
+      <div class="legend compact"><span class="kl k-ticket">金券</span><span class="kl k-food">罐頭單抽</span><span class="kl k-multi">11 連</span><span class="kl k-step">階段</span>${opts.platinum ? '<span class="kl k-plat">白金券</span>' : ''}
+        <span class="sep"></span>${[['rare', '稀有'], ['supa_fest', '激稀有（祭）'], ['supa', '激稀有'], ['uber_fest', '超激（祭）'], ['uber', '超激'],
         ['legend_fest', '傳說（祭）'], ['legend', '傳說'], ['owned', '已擁有'], ['exclusive', '限定']]
-        .map(([b, t]) => `<span class="band" style="--mj:var(--g-${b})">${t}</span>`).join('')}<span>底色依 bc.godfat.org：看那一格的分數區間，每個卡池同一格顏色相同</span></div>
+        .map(([b, t]) => `<span class="band" style="--mj:var(--g-${b})">${t}</span>`).join('')}</div>
       <div class="gridwrap" id="gridwrap">
         <style id="laneStyle"></style>
         <table class="grid"><thead><tr><th class="rn" rowspan="2">No.</th>${head1}</tr><tr>${head2}</tr></thead><tbody>${rows}</tbody></table>
@@ -880,6 +894,7 @@
     applyGridProgress();
     $('gridwrap').addEventListener('scroll', markStuckLanes, { passive: true });
     markStuckLanes();
+    floatGridHeader();
   }
 
   // Which sticky lanes are currently stacked at an edge (away from their own
@@ -911,6 +926,18 @@
     style.textContent = css;
   }
   window.addEventListener('resize', () => requestAnimationFrame(markStuckLanes));
+
+  // Keep the table header on screen while the page scrolls past the table.
+  function floatGridHeader() {
+    const wrap = $('gridwrap');
+    if (!wrap || wrap.offsetParent === null) return;
+    const head = wrap.querySelector('thead');
+    const r = wrap.getBoundingClientRect();
+    const shift = Math.max(0, Math.min(-r.top, r.height - head.offsetHeight - 40));
+    wrap.style.setProperty('--hdr-shift', `${shift}px`);
+  }
+  window.addEventListener('scroll', floatGridHeader, { passive: true });
+  window.addEventListener('resize', floatGridHeader);
 
   // Drag the table to scroll it. A press that moves less than a few pixels
   // is still a click (pinning a cell).
@@ -1041,7 +1068,13 @@
       $('results').querySelectorAll('[data-view]').forEach((b) => b.setAttribute('aria-selected', String(b === tab)));
       $('routeView').hidden = state.view !== 'route';
       $('gridView').hidden = state.view !== 'table';
+      $('results').classList.toggle('tableMode', state.view === 'table');
       if (state.view === 'table') renderGrid();
+      return;
+    }
+    if (e.target.closest('.gridhelp summary')) {
+      state.gridHelp = !e.target.closest('details').open;
+      save();
       return;
     }
     if (e.target.id === 'gridMore') { state.gridMore += 50; save(); renderGrid(); return; }
@@ -1238,6 +1271,8 @@
   });
 
   function showGuide() {
+    $('results').classList.remove('tableMode');
+    $('summaryBody').innerHTML = '<p class="hint">按「計算最佳路線」後會顯示這條路線的統計。</p>';
     $('results').innerHTML = `<section class="panel guide">
       <h2>開始使用</h2>
       <ol>
