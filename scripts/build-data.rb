@@ -67,7 +67,9 @@ abort 'exclusives list not found in find_cat.rb' if exclusives.empty?
   path = File.join(repo, 'build', "bc-#{lang}.yaml")
   next warn("skip #{path}") unless File.exist?(path)
 
-  src = YAML.load_file(path)
+  # Dates in the YAML are plain scalars, which Psych 4 (Ruby 3.1+) refuses
+  # to load unless the class is permitted.
+  src = YAML.safe_load(File.read(path), permitted_classes: [Date], aliases: true)
   cats = src['cats']
   events = {}
   platinum = {}
