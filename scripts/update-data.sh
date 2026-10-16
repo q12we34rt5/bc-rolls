@@ -33,7 +33,7 @@ for (const lang of ["tw", "jp", "en", "kr"]) {
 node test/verify-engine.js
 
 # Only the build date changed: nothing new upstream.
-changed=$(git diff -U0 data | grep '^[-+](' | sed 's/^[-+]//; s/"built":"[0-9-]*"//' | sort | uniq -u | wc -l)
+changed=$(git diff -U0 data | { grep '^[-+](' || true; } | sed 's/^[-+]//; s/"built":"[0-9-]*"//' | sort | uniq -u | wc -l)
 if [ "$changed" -eq 0 ]; then
   git checkout -q data
   echo "no banner changes (upstream $upstream)"
