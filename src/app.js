@@ -21,7 +21,7 @@
     // Pinned table cells: {key: event key, k: half position, g: guaranteed
     // cell, id: the cat shown there when pinned}.
     pins: [], view: 'route', gridMore: 0, gridCollapsed: [],
-    mode: 'exact', rv2: 0.2, rv3: 1, rv4: 5, rv5: 8, dv2: 0, dv3: 0, dv4: 0.5, dv5: 1, beam: 1000, owned: [],
+    mode: 'exact', fv2: 0.1, fv3: 0.5, fv4: 1, fv5: 2, rv2: 0.2, rv3: 1, rv4: 5, rv5: 8, dv2: 0, dv3: 0, dv4: 0.5, dv5: 1, beam: 1000, owned: [],
   });
 
   // Loaded by the 載入範例 button.
@@ -99,7 +99,7 @@
 
   function fillForm() {
     for (const k of ['seed', 'last', 'pos', 'food', 'tickets', 'maxRolls', 'platTickets', 'dateFrom', 'dateTo', 'lang', 'uberBonus', 'legendBonus',
-      'rv2', 'rv3', 'rv4', 'rv5', 'dv2', 'dv3', 'dv4', 'dv5', 'beam']) {
+      'fv2', 'fv3', 'fv4', 'fv5', 'rv2', 'rv3', 'rv4', 'rv5', 'dv2', 'dv3', 'dv4', 'dv5', 'beam']) {
       $(k).value = state[k];
     }
     $('allowMulti').checked = state.allowMulti;
@@ -124,7 +124,7 @@
     state.keepFood = $('keepFood').value === '1';
     state.platTickets = Math.max(0, parseInt($('platTickets').value, 10) || 0) || '';
     { const m = Math.floor(parseFloat($('maxRolls').value)); state.maxRolls = m > 0 ? m : ''; }
-    for (const k of ['rv2', 'rv3', 'rv4', 'rv5', 'dv2', 'dv3', 'dv4', 'dv5']) state[k] = Math.max(0, parseFloat($(k).value) || 0);
+    for (const k of ['fv2', 'fv3', 'fv4', 'fv5', 'rv2', 'rv3', 'rv4', 'rv5', 'dv2', 'dv3', 'dv4', 'dv5']) state[k] = Math.max(0, parseFloat($(k).value) || 0);
     state.beam = Math.max(50, parseInt($('beam').value, 10) || 1000);
     save();
   }
@@ -424,6 +424,10 @@
       targets, copyBonus,
       uberBonus: collect || !state.stopAtTargets ? state.uberBonus : 0,
       legendBonus: collect || !state.stopAtTargets ? state.legendBonus : 0,
+      // Exact mode: cats not owned score these per roll when not stopping at
+      // targets, and always break ties between equally cheap routes.
+      freshValue: collect || state.stopAtTargets ? {} : { 2: state.fv2, 3: state.fv3, 4: state.fv4, 5: state.fv5 },
+      freshTie: { 2: state.fv2, 3: state.fv3, 4: state.fv4, 5: state.fv5 },
       bannerBias: pools.map((p) => +state.bannerBias[p.key] || 0),
       allowMulti: state.allowMulti, keepFood: state.keepFood, maxRolls: +state.maxRolls || 0, cats: data().cats,
       owned: state.owned, beam: state.beam,

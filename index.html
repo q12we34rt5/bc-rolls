@@ -465,10 +465,18 @@ button:disabled:hover { border-color: var(--line); }
         </div>
         <div id="exactOpts" class="opts">
           <label class="check"><input type="checkbox" id="stopAtTargets"> 拿到目標就停（用最少的資源）</label>
-          <p class="hint" id="stopHint">只算第一次抽到目標的分數；分數一樣時選花費最少的路線，剩下的資源保留。取消勾選後，下面的加分和角色表的「重複」分數才會生效，多餘的資源會拿去多抽。</p>
+          <p class="hint" id="stopHint">只算第一次抽到目標的分數；分數一樣時選花費最少的路線，剩下的資源保留，花費也一樣時選抽到最多沒有的角色的路線。取消勾選後，下面的加分和角色表的「重複」分數才會生效，多餘的資源會拿去多抽。</p>
+          <div class="sub">沒有的角色每隻加分（不是目標、也沒勾已擁有）</div>
+          <div class="row four">
+            <label class="f"><span><span class="dot"></span> 稀有</span><input type="number" id="fv2" min="0" step="0.1"></label>
+            <label class="f"><span><span class="dot r3"></span> 激稀有</span><input type="number" id="fv3" min="0" step="0.1"></label>
+            <label class="f"><span><span class="dot r4"></span> 超激</span><input type="number" id="fv4" min="0" step="0.1"></label>
+            <label class="f"><span><span class="dot r5"></span> 傳說</span><input type="number" id="fv5" min="0" step="0.1"></label>
+          </div>
+          <p class="hint">勾著「拿到目標就停」時只用來在花費一樣的路線之間決勝。同一隻沒有的角色抽到兩次會算兩次。</p>
           <div class="row" id="bonusRow">
-            <label class="f">其他超激每隻加分<input type="number" id="uberBonus" min="0" step="0.1"></label>
-            <label class="f">其他傳說每隻加分<input type="number" id="legendBonus" min="0" step="0.1"></label>
+            <label class="f">已擁有的超激每隻加分<input type="number" id="uberBonus" min="0" step="0.1"></label>
+            <label class="f">已擁有的傳說每隻加分<input type="number" id="legendBonus" min="0" step="0.1"></label>
           </div>
         </div>
         <div id="collectOpts" class="opts">

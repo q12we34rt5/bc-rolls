@@ -32,7 +32,9 @@
   // route wins whenever one reaches the same score, and food (including
   // guaranteed rolls) is spent only when needed.
   //
-  // Only when resources tie too, the banner preference decides: bannerBias[p]
+  // Only when resources tie too, cats the player doesn't own decide (fr:
+  // freshTie[rarity] summed over each non-target cat rolled that isn't owned),
+  // then the banner preference: bannerBias[p]
   // is added once per cat rolled on banner p, and the higher total wins. It
   // never outranks score or resources, so it can't make a plan roll more.
   function cmpLeft(a, b, keepFood) {
@@ -43,7 +45,7 @@
   // Platinum tickets are the scarcest resource, so among equal scores the
   // route that keeps more of them wins before anything else is compared.
   function beats(a, b, keepFood) {
-    return (a.pt - b.pt || cmpLeft(a, b, keepFood) || a.pb - b.pb) > 0;
+    return (a.pt - b.pt || cmpLeft(a, b, keepFood) || (a.fr || 0) - (b.fr || 0) || a.pb - b.pb) > 0;
   }
 
   // Optional platinum ticket banner: opts.platinum = {pool, tickets}. A
@@ -96,9 +98,13 @@
 
   // opts: {seed, startK, lastId, pools, food, tickets, targets:[{id, weight,
   //        dup, must}], copyBonus:{id: value}, uberBonus, legendBonus,
+  //        owned:[id], freshValue:{rarity: value}, freshTie:{rarity: value},
   //        allowMulti, keepFood, maxRolls, bannerBias:[per pool],
   //        platinum:{pool, tickets}, pins:[{pool, k, g, id}], cats}
   // Cats from platinum rolls only count when they are targets.
+  // Non-target cats not in owned score freshValue[rarity] instead of the
+  // uber/legend bonus, per roll: the exact search can't track which of them
+  // were already rolled, so a second copy counts again (rare for ubers).
   function plan(opts) {
     const seeds = opts.seeds || new E.Seeds(opts.seed);
     const pools = opts.pools;
@@ -109,6 +115,8 @@
     const legendBonus = +opts.legendBonus || 0;
     // Per-roll value for specific non-target cats, overriding the bonuses.
     const copyBonus = new Map(Object.entries(opts.copyBonus || {}).map(([id, v]) => [+id, +v || 0]));
+    const owned = new Set(opts.owned || []);
+    const freshValue = opts.freshValue || {}, freshTie = opts.freshTie || {};
 
     const bit = new Map();
     const weights = [];
@@ -142,15 +150,16 @@
     // What a list of rolled cats adds: targets are a set (OR), other ubers
     // and legends add bonus per occurrence. Independent of the current state.
     function gainOf(list) {
-      let mask = 0, bonus = 0;
+      let mask = 0, bonus = 0, fresh = 0;
       for (const c of list) {
         const b = bit.get(c.id);
         if (b !== undefined) { mask |= 1 << b; bonus += +opts.targets[b].dup || 0; }
         else if (copyBonus.has(c.id)) bonus += copyBonus.get(c.id);
+        else if (!owned.has(c.id)) { bonus += +freshValue[c.rarity] || 0; fresh += +freshTie[c.rarity] || 0; }
         else if (c.rarity === E.UBER) bonus += uberBonus;
         else if (c.rarity === E.LEGEND) bonus += legendBonus;
       }
-      return { mask, bonus };
+      return { mask, bonus, fresh };
     }
 
     const multis = pools.map(multiSpec);
@@ -162,7 +171,7 @@
     const limit = rollLimit(opts), counting = limit < Infinity;
     const bias = pools.map((_, p) => +(opts.bannerBias || [])[p] || 0);
     const plat = platinumOf(opts);
-    function push(k, last, mask, f, t, b, n, pb, pt, parent, act) {
+    function push(k, last, mask, f, t, b, n, pb, pt, parent, act, fr) {
       if (n > limit) return;
       const i = k - startK;
       const bucket = buckets[i] || (buckets[i] = new Map());
@@ -172,19 +181,31 @@
       const cap = f + SINGLE_COST * t;
       if (list) {
         for (const e of list) {
-          if (e.f >= f && e.cap >= cap && e.b >= b && e.n <= n && e.pb >= pb && e.pt >= pt) return;
+          if (dominates(e, f, cap, b, n, pb, pt, fr)) return;
         }
         let keep = 0;
         for (const e of list) {
-          if (f >= e.f && cap >= e.cap && b >= e.b && n <= e.n && pb >= e.pb && pt >= e.pt) e.dead = true;
+          if (dominates({ f, cap, b, n, pb, pt, fr }, e.f, e.cap, e.b, e.n, e.pb, e.pt, e.fr)) e.dead = true;
           else list[keep++] = e;
         }
         list.length = keep;
       } else {
         byMask.set(mask, list = []);
       }
-      list.push({ mask, f, t, cap, b, n, pb, pt, parent, act, dead: false });
+      list.push({ mask, f, t, cap, b, n, pb, pt, fr, parent, act, dead: false });
       labelCount++;
+    }
+
+    // Whether label a, with the same mask, is never worse than (f, cap, ...)
+    // whatever follows. Score and resources are compared as a Pareto front;
+    // fr and pb only break ties (see beats), so they matter only when those
+    // are all equal. Fewer rolls is needed either way when rolls are capped.
+    // More food alone isn't a lasting lead: with the same total, the label
+    // with fewer tickets pays food for singles sooner and the gap closes.
+    function dominates(a, f, cap, b, n, pb, pt, fr) {
+      if (!(a.f >= f && a.cap >= cap && a.b >= b && a.pt >= pt && a.n <= n)) return false;
+      if (a.cap > cap || a.b > b || a.pt > pt) return true;
+      return a.fr > fr || (a.fr === fr && a.pb >= pb);
     }
 
     // Outcomes of every action from (k, last), shared by all labels there.
@@ -220,7 +241,7 @@
       return beats(a, b, opts.keepFood);
     }
 
-    push(startK, lastKey(opts.lastId || 0, startK), 0, opts.food, opts.tickets, 0, 0, 0, plat ? plat.tickets : 0, null, -1);
+    push(startK, lastKey(opts.lastId || 0, startK), 0, opts.food, opts.tickets, 0, 0, 0, plat ? plat.tickets : 0, null, -1, 0);
     let best = null;
 
     for (let i = 0; i < buckets.length; i++) {
@@ -242,16 +263,16 @@
             for (let p = 0; p < tr.length; p++) {
               const { single: s, multi: m, plat: pr } = tr[p];
               if (pr) {
-                if (L.pt > 0) push(pr.next, pr.last, L.mask | pr.mask, L.f, L.t, L.b, n1, L.pb, L.pt - 1, L, p * 2);
+                if (L.pt > 0) push(pr.next, pr.last, L.mask | pr.mask, L.f, L.t, L.b, n1, L.pb, L.pt - 1, L, p * 2, L.fr);
                 continue;
               }
               if (canSingle) {
-                if (L.t > 0) push(s.next, s.last, L.mask | s.mask, L.f, L.t - 1, L.b + s.bonus, n1, L.pb + bias[p], L.pt, L, p * 2);
-                else push(s.next, s.last, L.mask | s.mask, L.f - SINGLE_COST, L.t, L.b + s.bonus, n1, L.pb + bias[p], L.pt, L, p * 2);
+                if (L.t > 0) push(s.next, s.last, L.mask | s.mask, L.f, L.t - 1, L.b + s.bonus, n1, L.pb + bias[p], L.pt, L, p * 2, L.fr + s.fresh);
+                else push(s.next, s.last, L.mask | s.mask, L.f - SINGLE_COST, L.t, L.b + s.bonus, n1, L.pb + bias[p], L.pt, L, p * 2, L.fr + s.fresh);
               }
               if (m && L.f >= m.cost) {
                 push(m.next, m.last, L.mask | m.mask, L.f - m.cost, L.t, L.b + m.bonus, counting ? L.n + multis[p].count : 0,
-                  L.pb + bias[p] * multis[p].count, L.pt, L, p * 2 + 1);
+                  L.pb + bias[p] * multis[p].count, L.pt, L, p * 2 + 1, L.fr + m.fresh);
               }
             }
           }
