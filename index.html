@@ -119,7 +119,7 @@ body {
 }
 a { color: var(--accent-ink); }
 h1, h2, h3 { font-family: var(--font-display); font-weight: 800; text-wrap: balance; margin: 0; line-height: 1.25; }
-.wrap { max-width: 1240px; margin: 0 auto; display: grid; gap: 20px; }
+.wrap { margin: 0 auto; display: grid; gap: 20px; }
 header.top { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 20px; }
 header.top h1 { font-size: 26px; letter-spacing: .01em; }
 .actions { display: flex; gap: 8px; margin-left: auto; }
@@ -138,8 +138,8 @@ header.top p { flex-basis: 100%; margin: 0; color: var(--ink-2); max-width: none
 /* The table header follows the page scroll (set by script as --hdr-shift),
    since sticky can't reach past the table's own horizontal scroller. */
 .grid thead th { transform: translateY(var(--hdr-shift, 0px)); }
-}
 @media (max-width: 900px) { .layout { grid-template-columns: minmax(0, 1fr); } }
+@media (min-width: 1800px) { body { padding-inline: 24px; } .layout { grid-template-columns: minmax(0, 440px) minmax(0, 1fr); } }
 
 .panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; display: grid; gap: 14px; }
 .runbar { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 3; background: var(--ground); padding-block: 0 4px; margin-block: -4px 0; }
