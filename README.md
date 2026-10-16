@@ -24,6 +24,12 @@ git clone --depth 1 https://gitlab.com/godfat/battle-cats-rolls.git /tmp/bcr
 ruby scripts/build-data.rb /tmp/bcr        # 只保留 45 天內結束之後的活動
 ```
 
+或一次做完（抓最新資料、重建、檢查、有變動才 commit 並 push；CGI01 的 cron 每週一、四 09:00 會跑）：
+
+```sh
+scripts/update-data.sh            # --no-push 只 commit 不 push
+```
+
 ## 授權
 
 Apache License 2.0，見 [LICENSE](LICENSE)。
@@ -31,6 +37,8 @@ Apache License 2.0，見 [LICENSE](LICENSE)。
 抽蛋演算法和已擁有角色代碼移植自 [battle-cats-rolls](https://gitlab.com/godfat/battle-cats-rolls)（Copyright (c) 2018-2026, Lin Jen-Shin (godfat)，Apache License 2.0），卡池資料也是由它的資料產生的。移植和修改的部分列在 [NOTICE](NOTICE)。遊戲資料屬於 PONOS Corporation。
 
 ## 測試
+
+測試用 `test/data-tw.js`（2026-10-04 的資料快照），不受定期更新影響。
 
 ```sh
 node test/verify-engine.js   # 和 bc.godfat.org 的表格逐格比對（保底卡池 385 格＋白金轉蛋 200 格）

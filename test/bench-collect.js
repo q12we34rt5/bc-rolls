@@ -3,7 +3,7 @@
 const fs = require('fs'), path = require('path'), vm = require('vm');
 const E = require('../src/engine.js'), P = require('../src/planner.js');
 const ctx = { window: {} };
-vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../data/bc-tw.js'), 'utf8'), ctx);
+vm.runInNewContext(fs.readFileSync(path.join(__dirname, 'data-tw.js'), 'utf8'), ctx);
 const data = ctx.window.BC_DATA.tw;
 const keys = ['2026-09-28_1004', '2026-09-28_1081', '2026-09-30_947'];
 const pools = keys.map((k) => E.buildPool(data, k));

@@ -1,7 +1,7 @@
 const fs = require('fs'), path = require('path'), vm = require('vm');
 const E = require('../src/engine.js'), P = require('../src/planner.js');
 const ctx = { window: {} };
-vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../data/bc-tw.js'), 'utf8'), ctx);
+vm.runInNewContext(fs.readFileSync(path.join(__dirname, 'data-tw.js'), 'utf8'), ctx);
 const data = ctx.window.BC_DATA.tw;
 const day = '2026-09-30';
 const keys = Object.keys(data.events).filter((k) => data.events[k].start <= day && day <= data.events[k].end);

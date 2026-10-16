@@ -9,7 +9,7 @@ const vm = require('vm');
 const E = require('../src/engine.js');
 
 const ctx = { window: {} };
-vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../data/bc-tw.js'), 'utf8'), ctx);
+vm.runInNewContext(fs.readFileSync(path.join(__dirname, 'data-tw.js'), 'utf8'), ctx);
 const data = ctx.window.BC_DATA.tw;
 const seeds = new E.Seeds(2020607346);
 let fail = 0, total = 0;
